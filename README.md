@@ -53,6 +53,29 @@ auto    demucs*   whisper  punct/LLM  gateway-terms*  LLM    百炼/兼容/Edge 
 - **断点续跑**：每步产物落盘（`~/Library/Application Support/Ytb2ZH/Jobs/<id>/`，含 profile.json 快照），失败重跑自动跳过已完成步骤；翻译/合成幂等缓存。
 - **模板向后兼容**：旧版（七步、缺新字段）模板 JSON 与用户模板均可正常加载，缺省自动补默认值。
 
+## 国际化（i18n）
+
+界面以简体中文为开发语言，内置英文翻译（`Support/zh-Hans.lproj` / `Support/en.lproj`，约 400 条）：
+
+- SwiftUI 字面量（`Text` / `Button` / `.help` / `Section` 等）自动查表，无需改代码；动态拼接串经 `L()` / `L10n.tr()` 帮助层查表。
+- 切换语言：「应用设置 → 通用 → 界面语言」（跟随系统 / 简体中文 / English），写入 `AppleLanguages` 后重启生效（界面内提供「立即重启」）。
+- CLI 输出（JSON 事件流/人类可读文本）保持中文，不属于本机制；管线日志（`log.txt`）同样保持中文原文。
+- 打包时 `make bundle` 会自动把 `Support/*.lproj` 拷入 `Contents/Resources/`。
+
+## 日志系统
+
+- **全局日志**（`AppLog`）：进程内环形缓冲（最近 2000 行，debug/info/warn/error 四级 + 类别标签），入口在「应用设置 → 通用 → 运行日志 → 查看应用日志…」，支持按级别过滤、清空、复制、导出 txt。
+- **管线日志**：沿用任务目录 `log.txt`（跨续跑追加），同时镜像进全局日志，任务详情页看单任务、全局面板看时间线。
+- **系统日志**：warn/error 同步镜像到 NSLog（Console.app 可搜 `ytb2zh`），便于用户反馈时抓取。
+- CLI 的 stdout JSON 是接口契约，不走全局日志。
+
+## 图标
+
+```bash
+make icon      # Tools/make_icon.sh：SVG → 1024px PNG → iconutil → Assets/AppIcon.icns
+make bundle    # 打包时自动把 icns 拷入 Contents/Resources/（Info.plist 已配 CFBundleIconFile）
+```
+
 ## 布局
 
 ```
@@ -112,8 +135,29 @@ make app
 ## 开发
 
 ```bash
-make build && make test   # 44 个单测（含 130s 合成视频 3 窗口直播 E2E 冒烟）
+make build && make test   # 单测（调度器 fixture / 切分 / SRT / Netflix 字幕 / 三步翻译 / 模板兼容 / JobStore / 直播切窗与 playlist / 目录解析 / 流服务）
 make verify               # 真机自检：转录→切分→翻译→TTS→调度→成片
+make bundle               # 打包 .app（含 i18n 资源与图标）
 ```
 
 新增引擎三步：实现协议 → `EngineAssembly.registry()` 注册 → Profile 里选用。
+
+## 致谢
+
+本项目站在众多开源项目的肩膀上，感谢它们：
+
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) —— YouTube 等平台的视频/元数据下载与搜索（下载步、搜索浏览、订阅频道解析）
+- [whisper.cpp](https://github.com/ggerganov/whisper.cpp) —— 高性能本地词级时间戳语音识别（转录步）
+- [FFmpeg](https://ffmpeg.org) —— 转码、混音、字幕烧录、成片合成（合成步 / MediaCompat）
+- [Demucs](https://github.com/adefossez/demucs) —— 人声/伴奏分离，让保留 BGM 的中文配音成为可能（人声分离步）
+- [edge-tts](https://github.com/rany2/edge-tts) —— 免费的微软 Edge 在线语音合成（可选配音引擎）
+- [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) —— 离线本地 TTS（可选配音引擎）
+- [VideoLingo](https://github.com/Huanshere/VideoLingo) —— 术语表、三步翻译、Netflix 字幕标准等理念参考
+- [pyVideoTrans](https://github.com/jianchang512/pyvideotrans) —— 多通道引擎与批量任务等产品形态参考
+- [vid2zh](https://github.com/vid2zh) —— 本项目架构源自其 Python 原型管线（九步流程、漂移调度算法、实测经验）
+
+以及所有未被列出但同样重要的上游生态（百炼 / OpenAI 兼容 API 的模型服务方、SwiftUI / Network.framework 等系统框架）。
+
+## 许可证
+
+MIT，详见 [LICENSE](LICENSE)。
