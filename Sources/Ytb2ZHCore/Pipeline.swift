@@ -300,10 +300,23 @@ public final class Pipeline: Sendable {
     func synthCacheHit(_ dir: URL, _ key: String) -> Bool { cachedSynth(dir, key) != nil }
 }
 
-/// 子句拆分：供 Pipeline 与 GUI 预览共用
+/// 子句拆分：供 Pipeline 与调度器共用
+/// 目标：每条子句是一个自然的连读单元。逗号拆分本身没错，错在"拆太碎"——
+/// 短句被拆成两条 TTS 片段、调度器再塞 pauseMin 停顿，听感上"一句话念成两截"。
+/// 三条新规则：
+///   ① 短句不拆：整条译文去标点 ≤ wholeSentenceMaxChars 时视为一句，单条 TTS 连读；
+///   ② 贪心凑整：相邻子句累计 < minClauseChars 字时继续并入，避免碎句连读；
+///   ③ 孤儿尾句：最后一条 < orphanTailChars 字并入前句。
 public final class ClauseTextSplitter: @unchecked Sendable {
     private let separators = CharacterSet(charactersIn: "，；、")
-    private let punct = CharacterSet(charactersIn: "，；、。！？")
+    private let punct = CharacterSet(charactersIn: "，；、。！？…")
+
+    /// 整条译文去标点不超过此字数 → 不拆（约 4 字/秒 ≈ 4 秒语音之内）
+    static let wholeSentenceMaxChars = 16
+    /// 子句合并目标长度（相邻子句累计不足此字数即并入）
+    static let minClauseChars = 8
+    /// 孤儿尾句判定阈值
+    static let orphanTailChars = 5
 
     public init() {}
 
@@ -318,21 +331,40 @@ public final class ClauseTextSplitter: @unchecked Sendable {
         }
         if !current.isEmpty { parts.append(current) }
         parts = parts.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        // 过短子句并入前句（连读更自然）
+        guard parts.count > 1 else {
+            return parts.isEmpty && !text.isEmpty ? [text] : parts
+        }
+
+        let punctSet = punct
+        let bare = { (s: String) -> Int in s.trimmingCharacters(in: punctSet).count }
+
+        // 规则①：短句不拆
+        if parts.reduce(0, { $0 + bare($1) }) <= Self.wholeSentenceMaxChars {
+            return [text]
+        }
+
+        // 规则②：贪心合并，目标每条 ≥ minClauseChars（尾条例外，交给规则③）
         var merged: [String] = []
+        var acc = ""
         for p in parts {
-            let bare = p.trimmingCharacters(in: punct)
-            if let last = merged.last, bare.count < 5 {
-                merged[merged.count - 1] = last + p
-            } else if !bare.isEmpty {
-                merged.append(p)
+            if acc.isEmpty { acc = p; continue }
+            if bare(acc) < Self.minClauseChars {
+                acc += p
+            } else {
+                merged.append(acc); acc = p
             }
+        }
+        if !acc.isEmpty { merged.append(acc) }
+
+        // 规则③：孤儿尾句并入前句（连读更自然）
+        if merged.count > 1, let tail = merged.last, bare(tail) < Self.orphanTailChars {
+            merged[merged.count - 2] += tail
+            merged.removeLast()
         }
         return merged.isEmpty && !text.isEmpty ? [text] : merged
     }
 }
 
-// MARK: - 合成缓存读取（Pipeline 与调度器共享）
 
 public func cachedSynth(_ dir: URL, _ key: String) -> (url: URL, duration: Double)? {
     let fm = FileManager.default

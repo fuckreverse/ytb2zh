@@ -19,7 +19,8 @@ final class DriftSchedulerTests: XCTestCase {
 
     /// 多子句富余：先扩停顿到 pauseMax，剩余再慢放
     func testSlackFillsPausesFirst() {
-        let units = [SpeechUnit(start: 10, end: 20, en: "hello", zh: "第一句，第二句")]
+        // 长句才会被 ClauseTextSplitter 拆成 2 条子句（各≥8 字且总字数>16）
+        let units = [SpeechUnit(start: 10, end: 20, en: "hello", zh: "第一条子句要凑够八个字以上，第二条子句也要凑够八个字。")]
         // 每子句 1s，可用 12.4：停顿 2 个 gap → 扩到 pauseMax=1.3，剩 12.4-2-2.6=7.8 → 慢放封顶
         let plan = DriftSchedulerEngine().schedule(units: units, clauseDurations: [[1.0, 1.0]], options: opts)
         let ps = plan.placements
@@ -33,7 +34,7 @@ final class DriftSchedulerTests: XCTestCase {
     func testOverflowSpeedsUp() {
         var o = opts
         o.fastMax = 1.3
-        let units = [SpeechUnit(start: 0, end: 5, en: "hello", zh: "第一句，第二句")]
+        let units = [SpeechUnit(start: 0, end: 5, en: "hello", zh: "第一条子句要凑够八个字以上，第二条子句也要凑够八个字。")]
         let plan = DriftSchedulerEngine().schedule(units: units, clauseDurations: [[3.0, 3.0]], options: o)
         let ps = plan.placements
         // avail = 5.95，raw+pauses = 6.25 → need = 1.0593（未到 fastMax）→ 每子句 ≈ 2.83s
@@ -104,6 +105,83 @@ final class PunctSegmentationTests: XCTestCase {
         let units = PunctSegmentationEngine().segment(words: words, options: .init())
         XCTAssertEqual(units.count, 1)
         XCTAssertEqual(units[0].en, "ok.")
+    }
+
+    // MARK: 句界消歧（防止一句话被切成两条）
+
+    /// 缩写句点不收：Dr./U.S. 等不在句子中间断开
+    func testAbbreviationDoesNotCut() {
+        let words = [
+            TimedWord(start: 0, end: 0.5, text: " Meet"),
+            TimedWord(start: 0.5, end: 1.0, text: " Dr."),
+            TimedWord(start: 1.0, end: 1.5, text: " Smith"),
+            TimedWord(start: 1.5, end: 2.0, text: " at"),
+            TimedWord(start: 2.0, end: 2.5, text: " the"),
+            TimedWord(start: 2.5, end: 3.0, text: " U.S."),
+            TimedWord(start: 3.0, end: 3.5, text: " lab."),
+        ]
+        let units = PunctSegmentationEngine().segment(words: words, options: .init())
+        XCTAssertEqual(units.count, 1)
+        XCTAssertTrue(units[0].en.contains("Smith"))
+        XCTAssertTrue(units[0].en.contains("U.S."))
+    }
+
+    /// 句点后下个词小写 → 不是句末（whisper 标点错位 / 编号列表）
+    func testLowercaseAfterPeriodNotBoundary() {
+        let words = [
+            TimedWord(start: 0, end: 0.5, text: " It"),
+            TimedWord(start: 0.5, end: 1.0, text: " never"),
+            TimedWord(start: 1.0, end: 1.5, text: " stops."),
+            TimedWord(start: 1.5, end: 2.0, text: " it"),
+            TimedWord(start: 2.0, end: 2.5, text: " keeps"),
+            TimedWord(start: 2.5, end: 3.0, text: " going."),
+        ]
+        let units = PunctSegmentationEngine().segment(words: words, options: .init())
+        XCTAssertEqual(units.count, 1)   // "stops." 后接小写 "it" → 不收，整句一条
+    }
+
+    /// 硬切（无标点 13s 强制收）后与下一单元合并
+    func testHardCutMergesWithNext() {
+        var words: [TimedWord] = []
+        for k in 0..<16 { words.append(TimedWord(start: Double(k), end: Double(k) + 1, text: " w\(k)")) }
+        words.append(TimedWord(start: 16, end: 16.5, text: " done."))
+        // w12 处累计 13s 无标点 → 硬切出第 1 条（0~13s，无终止标点），
+        // 第 2 条 w13~done.（13~16.5s）；合并趟把两条合回一句（16.5 ≤ cap 19.5）
+        let units = PunctSegmentationEngine().segment(words: words, options: .init(softWindow: 7, hardWindow: 13))
+        XCTAssertEqual(units.count, 1)
+        XCTAssertTrue(units[0].en.hasSuffix("done."))
+    }
+
+    /// 逗号软收是设计内切分，不被合并趟吃掉
+    func testCommaSoftCutNotMerged() {
+        var words: [TimedWord] = []
+        for k in 0..<6 { words.append(TimedWord(start: Double(k), end: Double(k) + 1, text: " w\(k)")) }
+        words.append(TimedWord(start: 6, end: 7, text: " part,"))
+        words.append(TimedWord(start: 7, end: 8, text: " two"))
+        words.append(TimedWord(start: 8, end: 9, text: " done."))
+        let units = PunctSegmentationEngine().segment(words: words, options: .init(softWindow: 7, hardWindow: 13))
+        XCTAssertEqual(units.count, 2)   // 逗号处收句 → 两条；合并趟不得把它们合回去
+        XCTAssertTrue(units[0].en.hasSuffix("part,"))
+    }
+
+    /// isSentenceBoundary 单测：缩写白名单 / 内部句点 / 纯数字 / 问叹号
+    func testIsSentenceBoundary() {
+        // 问叹号永远句末
+        XCTAssertTrue(PunctSegmentationEngine.isSentenceBoundary("stop?", next: "And"))
+        XCTAssertTrue(PunctSegmentationEngine.isSentenceBoundary("great!", next: nil))
+        // 缩写
+        XCTAssertFalse(PunctSegmentationEngine.isSentenceBoundary("Dr.", next: "Smith"))
+        XCTAssertFalse(PunctSegmentationEngine.isSentenceBoundary("e.g.", next: "GPUs"))
+        XCTAssertFalse(PunctSegmentationEngine.isSentenceBoundary("etc.", next: "Also"))
+        XCTAssertFalse(PunctSegmentationEngine.isSentenceBoundary("vs.", next: "Windows"))
+        // 纯数字编号 / 单字母
+        XCTAssertFalse(PunctSegmentationEngine.isSentenceBoundary("3.", next: "Run"))
+        XCTAssertFalse(PunctSegmentationEngine.isSentenceBoundary("J.", next: "Smith"))
+        // 正常句末
+        XCTAssertTrue(PunctSegmentationEngine.isSentenceBoundary("works.", next: "Next"))
+        XCTAssertTrue(PunctSegmentationEngine.isSentenceBoundary("works.", next: nil))
+        // 句点后小写 → 不收
+        XCTAssertFalse(PunctSegmentationEngine.isSentenceBoundary("stops.", next: "it"))
     }
 }
 

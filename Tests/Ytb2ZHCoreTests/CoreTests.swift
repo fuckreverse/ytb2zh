@@ -51,10 +51,28 @@ final class CoreTests: XCTestCase {
     func testClauseSplitter() {
         XCTAssertEqual(ClauseTextSplitter().split("无标点一句话"), ["无标点一句话"])
         XCTAssertEqual(ClauseTextSplitter().split(""), [])
-        let parts = ClauseTextSplitter().split("第一部分很长，第二部分也很长，结尾。")
-        // "结尾。" 去标点后仅 2 字（<5）→ 并入前句
+        // 短句（去标点 15 字 ≤ 16）→ 整句单条 TTS，不再拆成两截
+        XCTAssertEqual(ClauseTextSplitter().split("第一部分很长，第二部分也很长，结尾。"),
+                       ["第一部分很长，第二部分也很长，结尾。"])
+        XCTAssertEqual(ClauseTextSplitter().split("所以这个方法很有效，对吧。"),
+                       ["所以这个方法很有效，对吧。"])
+    }
+
+    func testClauseSplitterGreedyAndOrphan() {
+        // 长句：贪心合并开头碎句 + 孤儿尾句并入前句
+        let parts = ClauseTextSplitter().split(
+            "你看，这个方法，其实非常非常简单而且很实用，你们回去都能用。")
+        // "你看，"+"这个方法，" 均不足 8 字 → 依次并入后句
+        XCTAssertTrue(parts[0].hasPrefix("你看，"))
+        // 孤儿尾句"你们回去都能用。"… 实际 ≥8 字不并；此处验证整句被拆成了 2 条自然长句
         XCTAssertEqual(parts.count, 2)
-        XCTAssertTrue(parts[1].hasSuffix("结尾。"))
+        XCTAssertTrue(parts[0].contains("其实非常"))
+
+        // 孤儿尾句：结尾 2 字并入前句
+        let parts2 = ClauseTextSplitter().split(
+            "比如说我们今天要聊的这个话题有多重要，其实就是大模型的安全问题，对吧。")
+        XCTAssertEqual(parts2.count, 2)
+        XCTAssertTrue(parts2[1].hasSuffix("对吧。"))
     }
 
     func testLegacyProfileDecode() throws {
