@@ -254,6 +254,28 @@ struct LivePlayerView: View {
                 .help("后台开始转译配音（原声不中断，处理约 4x 实时），就绪后这里会变成「切换中文配音」")
             }
 
+            // —— 倍速（跨原声/中文/live/成片保留）
+            Menu {
+                ForEach(LiveSession.speedOptions, id: \.self) { r in
+                    Button {
+                        session.playbackRate = r
+                    } label: {
+                        if session.playbackRate == r {
+                            Label(LiveSession.rateLabel(r), systemImage: "checkmark")
+                        } else {
+                            Text(LiveSession.rateLabel(r))
+                        }
+                    }
+                }
+            } label: {
+                Label(LiveSession.rateLabel(session.playbackRate), systemImage: "speedometer")
+                    .fixedSize()
+            }
+            .menuStyle(.borderedButton)
+            .menuIndicator(.visible)
+            .fixedSize()
+            .help("播放倍速（对原声/中文配音均生效）")
+
             Spacer()
 
             if session.converting {
@@ -473,6 +495,19 @@ final class LiveSession: ObservableObject {
     @Published var convertingPhase = ""
     @Published var convertingProgress: Double = 0
     @Published var downloadingOriginal = false
+    @Published var playbackRate: Float = 1.0 {
+        didSet {
+            // 播放中即时生效；暂停时只记住，下次开播按新倍速
+            guard playbackRate != oldValue, let p = player, p.rate > 0 else { return }
+            p.rate = playbackRate
+        }
+    }
+
+    static let speedOptions: [Float] = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+
+    static func rateLabel(_ r: Float) -> String {
+        r == Float(Int(r)) ? String(format: "%gx", r) : String(format: "%.2gx", r)
+    }
 
     private var runTask: Task<Void, Never>?
     private var timeObserver: Any?
@@ -619,7 +654,7 @@ final class LiveSession: ObservableObject {
         let dur = ffprobeDuration(src) ?? 0
         let target = dur > 0 ? min(watched, dur - 1) : watched
         if target > 1 { player?.seek(to: CMTime(seconds: target, preferredTimescale: 600)) }
-        player?.play()
+        startPlayback()
     }
 
     func switchToChinese() {
@@ -640,7 +675,7 @@ final class LiveSession: ObservableObject {
             startSubtitleTracking()
             let target = dubbedSeconds > 0 ? min(watched, max(0, dubbedSeconds - 1)) : watched
             if target > 1 { player?.seek(to: CMTime(seconds: target, preferredTimescale: 600)) }
-            player?.play()
+            startPlayback()
             return
         }
         // 2) 有成片但非本会话产物（批量管线等）→ 直接播成片
@@ -761,7 +796,7 @@ final class LiveSession: ObservableObject {
         totalSeconds = ffprobeDuration(file) ?? 0
         player = AVPlayer(url: file)
         startSubtitleTracking()
-        player?.play()
+        startPlayback()
     }
 
     private func playChineseReplay(_ hit: ReplayHit) {
@@ -781,7 +816,7 @@ final class LiveSession: ObservableObject {
             player = AVPlayer(url: hit.finalVideo)   // 批量管线产物：成片直读
         }
         startSubtitleTracking()
-        player?.play()
+        startPlayback()
     }
 
     private func reset() {
@@ -826,7 +861,7 @@ final class LiveSession: ObservableObject {
             if mode == .chinese {
                 player = Self.makePlayer(token: token)
                 startSubtitleTracking()
-                player?.play()
+                startPlayback()
             } else {
                 convertingPhase = "中文版已就绪"
                 convertingProgress = 1
@@ -861,6 +896,12 @@ final class LiveSession: ObservableObject {
             downloadingOriginal = false
             phaseTitle = "失败"
         }
+    }
+
+    /// 统一开播入口：带当前倍速（新建/切换播放器后倍速不丢）
+    private func startPlayback() {
+        guard let p = player else { return }
+        p.playImmediately(atRate: playbackRate)
     }
 
     // MARK: 字幕
