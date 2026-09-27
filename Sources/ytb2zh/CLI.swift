@@ -16,6 +16,7 @@ struct Ytb2ZHCLI {
             case "providers": cmdProviders()
             case "jobs": cmdJobs()
             case "verify": try await VerifyCommand.run(Array(args.dropFirst()))
+            case "orig-probe": try await OrigProbe.run(Array(args.dropFirst()))
             case "tts-probe": try await TTSProbe.run(Array(args.dropFirst()))
             case "help", "--help", "-h", nil: printUsage()
             default:
@@ -43,6 +44,7 @@ struct Ytb2ZHCLI {
           ytb2zh providers
           ytb2zh jobs
           ytb2zh verify [--media <path>]
+          ytb2zh orig-probe <url> [--proxy <p>]   看原版链路快验（解析→反代→m3u8/分片）
 
         run 事件流（每行一个 JSON）:
           {"event":"stepStarted","step":"download"}

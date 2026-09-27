@@ -15,6 +15,9 @@ final class SubscriptionStore: ObservableObject {
         var addedAt: Date = Date()
         var lastChecked: Date?
         var videos: [CatalogVideo] = []
+        /// true＝名字是自动生成的（「订阅 N」或拉取列表后按频道/列表标题自动命名），
+        /// 手动重命名后置 false，之后的自动命名不再覆盖
+        var autoNamed: Bool?
     }
 
     @Published private(set) var subs: [Subscription] = []
@@ -36,7 +39,19 @@ final class SubscriptionStore: ObservableObject {
     func add(name: String, url: String) {
         let n = name.trimmingCharacters(in: .whitespaces)
         subs.append(Subscription(name: n.isEmpty ? "订阅 \(subs.count + 1)" : n,
-                                 url: url.trimmingCharacters(in: .whitespaces)))
+                                 url: url.trimmingCharacters(in: .whitespaces),
+                                 autoNamed: n.isEmpty))
+        persistSubs()
+    }
+
+    /// 重命名；isAuto=true 表示自动命名（仅覆盖 autoNamed 占位名，手动改过的不动）
+    func rename(id: UUID, name: String, isAuto: Bool = false) {
+        guard let i = subs.firstIndex(where: { $0.id == id }) else { return }
+        let n = name.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty else { return }
+        guard isAuto == false || subs[i].autoNamed == true else { return }
+        subs[i].name = n
+        if !isAuto { subs[i].autoNamed = false }
         persistSubs()
     }
 

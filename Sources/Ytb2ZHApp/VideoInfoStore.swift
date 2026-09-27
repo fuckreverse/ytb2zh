@@ -3,6 +3,52 @@ import Ytb2ZHEngines
 
 // MARK: - 视频完整元数据仓库（url → VideoDetails，落 Application Support/Ytb2ZH/VideoInfo.json）
 
+// MARK: - 共享元数据补齐器：逐个串行拉取缺失的 VideoDetails（媒体库 / 任务中心共用）
+
+@MainActor
+final class MetaBackfiller: ObservableObject {
+    @Published private(set) var isRunning = false
+    @Published private(set) var doneCount = 0
+    /// 本会话内拉取失败的 URL（不重试；调用方手动刷新时可调 reset 清掉）
+    private var failedURLs: Set<String> = []
+    private var task: Task<Void, Never>?
+
+    /// 对缺失详情的 URL 后台补齐；每补齐一条回调一次（调用方据此刷新列表）
+    func backfill(urls: [String], onChange: @escaping () -> Void) {
+        guard !isRunning else { return }
+        let missing = Array(Set(VideoInfoStore.shared.missingURLs(in: urls)))
+            .filter { !failedURLs.contains($0) }
+        guard !missing.isEmpty else { return }
+        isRunning = true
+        doneCount = 0
+        let proxy = AppSettings.effectiveProxy(fallback: "")
+        task = Task { [weak self] in
+            let service = VideoInfoService()
+            for url in missing {
+                if Task.isCancelled { break }
+                let result = await Task.detached {
+                    try? service.fetch(url, proxy: proxy)
+                }.value
+                guard let self else { break }
+                if let d = result {
+                    VideoInfoStore.shared.upsert(d)
+                    self.failedURLs.remove(url)
+                    self.doneCount += 1
+                    onChange()
+                } else {
+                    self.failedURLs.insert(url)
+                }
+            }
+            self?.isRunning = false
+        }
+    }
+
+    /// 清空失败记录（手动刷新时允许重试）
+    func resetFailures() { failedURLs.removeAll() }
+
+    deinit { task?.cancel() }
+}
+
 @MainActor
 final class VideoInfoStore: ObservableObject {
     static let shared = VideoInfoStore()

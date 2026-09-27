@@ -62,6 +62,16 @@ public struct CatalogVideo: Identifiable, Sendable, Hashable, Codable {
 public struct VideoCatalogService: Sendable {
     public init() {}
 
+    /// 频道/播放列表标题清理（自动命名用）：去掉 YouTube 页尾部装饰
+    public static func cleanListTitle(_ t: String) -> String {
+        var clean = t.trimmingCharacters(in: .whitespaces)
+        for suffix in [" - Videos", " - Shorts", " - Live", " - Playlists", " - YouTube"]
+        where clean.hasSuffix(suffix) {
+            clean = String(clean.dropLast(suffix.count)).trimmingCharacters(in: .whitespaces)
+        }
+        return clean
+    }
+
     /// 录入项是否“播放列表/频道”链接（应展开浏览而不是当做单视频转换）。
     /// watch?v=xx &list=yy 的混合地址视为单视频（下载引擎带 --no-playlist）。
     public static func isLikelyListURL(_ query: String) -> Bool {
@@ -78,11 +88,21 @@ public struct VideoCatalogService: Sendable {
         return false
     }
 
-    /// 搜索：query 为关键词（ytsearch）或 http(s) 链接（单视频/频道/播放列表）；
-    /// offset 用于播放列表“加载更多”（--playlist-start，仅对 URL 查询生效）。
-    public func search(_ query: String, limit: Int = 24, offset: Int = 0, proxy: String = "") throws -> [CatalogVideo] {
+    /// 频道/播放列表页拉取结果：容器自身标题（自动命名用）+ 视频列表
+    public struct CatalogPage: Sendable {
+        public let title: String?
+        public let videos: [CatalogVideo]
+        public init(title: String?, videos: [CatalogVideo]) {
+            self.title = title
+            self.videos = videos
+        }
+    }
+
+    /// 同 search，但额外返回频道/播放列表自身标题（-J 顶层 title）
+    public func searchPage(_ query: String, limit: Int = 24, offset: Int = 0,
+                           proxy: String = "") throws -> CatalogPage {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return [] }
+        guard !q.isEmpty else { return CatalogPage(title: nil, videos: []) }
         let res = try ProcessRunner().run(SidecarPaths.ytDlp,
                                           Self.listArgs(query: q, limit: limit, offset: offset, proxy: proxy))
         guard res.code == 0, !res.stdout.isEmpty else {
@@ -91,12 +111,22 @@ public struct VideoCatalogService: Sendable {
         guard let obj = try? JSONSerialization.jsonObject(with: Data(res.stdout.utf8)) as? [String: Any] else {
             throw EngineError.engineFailure("搜索结果解析失败")
         }
+        let title = (obj["title"] as? String).map(Self.cleanListTitle)
         // 播放列表/搜索 → entries；单视频 URL → 自身
         if let entries = obj["entries"] as? [[String: Any]] {
-            return entries.compactMap { Self.parseEntry($0) }
+            return CatalogPage(title: title, videos: entries.compactMap { Self.parseEntry($0) })
         }
-        if let one = Self.parseEntry(obj) { return [one] }
-        return []
+        if let one = Self.parseEntry(obj) {
+            // 单视频页：标题用视频自身频道名更合适
+            return CatalogPage(title: one.channel ?? title, videos: [one])
+        }
+        return CatalogPage(title: title, videos: [])
+    }
+
+    /// 搜索：query 为关键词（ytsearch）或 http(s) 链接（单视频/频道/播放列表）；
+    /// offset 用于播放列表“加载更多”（--playlist-start，仅对 URL 查询生效）。
+    public func search(_ query: String, limit: Int = 24, offset: Int = 0, proxy: String = "") throws -> [CatalogVideo] {
+        try searchPage(query, limit: limit, offset: offset, proxy: proxy).videos
     }
 
     /// yt-dlp 参数构造（纯函数，供测试）：URL 走 playlist 窗口；关键词转 ytsearch；
