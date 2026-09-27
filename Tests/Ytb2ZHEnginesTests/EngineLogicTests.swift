@@ -376,7 +376,6 @@ final class TranslateCoreTests: XCTestCase {
         }
         XCTAssertTrue(captured.wrapped.contains("hello → 哈喽"))
     }
-}
 
     /// 领域语境注入：捕获的 system prompt 里含领域/语气/受众；空语境不注入
     func testDomainInjection() async throws {
@@ -578,6 +577,18 @@ final class LocalTTSEngineTests: XCTestCase {
         let round = try JSONDecoder().decode(SynthOptions.self, from: data)
         XCTAssertEqual(round.localVoice, opts.localVoice)
         XCTAssertEqual(round.sherpaOnnxModelDir, opts.sherpaOnnxModelDir)
+    }
+}
+
+
+// MARK: 原声即播：容器可播性
+
+final class MediaCompatTests: XCTestCase {
+    func testMediaCompatPlayability() {
+        XCTAssertTrue(MediaCompat.isNativePlayable(URL(fileURLWithPath: "/x/y/source.mp4")))
+        XCTAssertTrue(MediaCompat.isNativePlayable(URL(fileURLWithPath: "/x/y/a.MOV")))
+        XCTAssertFalse(MediaCompat.isNativePlayable(URL(fileURLWithPath: "/x/y/source.webm")))
+        XCTAssertFalse(MediaCompat.isNativePlayable(URL(fileURLWithPath: "/x/y/source.mkv")))
     }
 }
 
