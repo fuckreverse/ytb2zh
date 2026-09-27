@@ -13,13 +13,16 @@ final class PipelineJob: ObservableObject {
     @Published var error: String?
     @Published var outputURL: URL?
     @Published var logLines: [String] = []
+    @Published private(set) var jobID: String?
 
     func start(url: String, profile: Profile) {
         start(url: url, profile: profile, jobID: nil, stepFilter: [])
     }
 
-    /// resumeID 非空 = 续跑已有任务；stepFilter 非空 = 只跑指定步骤（如改完译文从翻译续跑）
-    func start(url: String, profile: Profile, jobID resumeID: String?, stepFilter: Set<StepID>) {
+    /// resumeID 非空 = 续跑已有任务；stepFilter 非空 = 只跑指定步骤（如改完译文从翻译续跑）；
+    /// trialSeconds 非空 = 试转模式（新独立任务，只处理前 N 秒验证配置）
+    func start(url: String, profile: Profile, jobID resumeID: String? = nil,
+               stepFilter: Set<StepID> = [], trialSeconds: Int? = nil) {
         guard !running else { return }
         running = true; error = nil; outputURL = nil
         logLines = []; stepProgress = [:]
@@ -30,7 +33,7 @@ final class PipelineJob: ObservableObject {
             if let resumeID {
                 jobID = resumeID
             } else {
-                jobID = try store.newJob(url: url, profile: profile)
+                jobID = try store.newJob(url: url, profile: profile, trial: trialSeconds != nil)
             }
         } catch {
             self.error = error.localizedDescription
@@ -40,7 +43,7 @@ final class PipelineJob: ObservableObject {
 
         let (stream, cont) = AsyncStream<PipelineEvent>.makeStream()
         let engineSet: EngineSet
-        do { engineSet = try EngineAssembly.engineSet(for: profile) }
+        do { engineSet = try EngineAssembly.engineSet(for: AppSettings.applied(profile)) }
         catch {
             self.error = error.localizedDescription
             running = false
@@ -48,10 +51,15 @@ final class PipelineJob: ObservableObject {
         }
         let pipeline = Pipeline(engines: engineSet, store: store, events: cont)
 
+        self.jobID = jobID
+        appendLog(trialSeconds != nil
+                  ? "—— 运行开始（试转：前 \(trialSeconds!) 秒）——"
+                  : "—— 运行开始（\(resumeID == nil ? "新任务" : "续跑 \(resumeID!)")）——")
         Task {
             let runTask = Task.detached {
                 try await pipeline.run(videoURL: URL?.none, url: url, profile: profile,
-                                       jobID: jobID, stepFilter: stepFilter)
+                                       jobID: jobID, stepFilter: stepFilter,
+                                       trialSeconds: trialSeconds)
             }
             for await event in stream {
                 handle(event)
@@ -61,26 +69,44 @@ final class PipelineJob: ObservableObject {
         }
     }
 
+    /// 日志同步落盘 jobDir/log.txt（跨续跑追加，供任务详情页查看）
+    private func appendLog(_ line: String) {
+        guard let id = jobID else { return }
+        let url = JobStore().jobDir(id: id).appendingPathComponent("log.txt")
+        let data = Data((line + "\n").utf8)
+        if let h = try? FileHandle(forWritingTo: url) {
+            defer { try? h.close() }
+            try? h.seekToEnd()
+            try? h.write(contentsOf: data)
+        } else {
+            try? data.write(to: url)
+        }
+    }
+
     @MainActor
     private func handle(_ e: PipelineEvent) {
         switch e {
         case .stepStarted(let s):
             currentStep = s
             stepProgress[s] = 0
+            appendLog("▶ \(s.label)")
         case .progress(let s, let p, let m):
             stepProgress[s] = p
             if let m { lastMessage = "\(s.label)：\(m)" }
         case .stepFinished(let s, let info):
             stepProgress[s] = 1.0
             logLines.append("✅ \(s.label) \(info.isEmpty ? "" : String(describing: info))")
+            appendLog("✅ \(s.label) \(info.isEmpty ? "" : String(describing: info))")
             if s == .compose, let out = info["output"] {
                 outputURL = URL(fileURLWithPath: out)
             }
         case .log(let m):
             logLines.append(m)
+            appendLog(m)
         case .failed(let s, let err):
             error = "\(s.label)：\(err)"
             logLines.append("❌ \(s.label)：\(err)")
+            appendLog("❌ \(s.label)：\(err)")
         }
     }
 }
@@ -101,17 +127,54 @@ struct RunBar: View {
                     Label("开始转换", systemImage: "play.fill")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(videoURL.trimmingCharacters(in: .whitespaces).isEmpty || (job?.running ?? false))
+                .disabled(disabled)
+                .help(disabledHint)
+
+                // 两段式：先跑到翻译停下，人工审核确认后再在任务中心继续转换
+                Button {
+                    let j = PipelineJob()
+                    job = j
+                    j.start(url: videoURL, profile: profile, jobID: nil,
+                            stepFilter: [.download, .separate, .transcribe, .segment, .summarize, .translate])
+                } label: {
+                    Label("生成译文（先审核）", systemImage: "text.badge.checkmark")
+                }
+                .buttonStyle(.bordered)
+                .disabled(disabled)
+                .help("只跑到「翻译」就停下：下载→转录→切分→术语→翻译，不出成片。跑到翻译后到任务中心打开「审核译文」，人工确认/修改后点「保存并继续转换」再出片")
+
+                // 试转：独立新任务只处理前 3 分钟，低成本验证全链路配置；确认没问题再全量转换
+                Button {
+                    let j = PipelineJob()
+                    job = j
+                    j.start(url: videoURL, profile: profile, jobID: nil,
+                            stepFilter: [], trialSeconds: 180)
+                } label: {
+                    Label("试转前3分钟", systemImage: "gauge.with.needle")
+                }
+                .buttonStyle(.bordered)
+                .disabled(disabled)
+                .help("试转模式：新开独立任务，下载/转录/翻译/配音/成片全流程只跑前 3 分钟，快速验证配置。小样没问题后，再用「开始转换」跑全片（全片是新任务，互不影响）")
+
+                if disabled && (job?.running ?? false) == false {
+                    Text("先在上方填入视频地址")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
 
                 if let job, job.running {
                     ProgressView().controlSize(.small).padding(.horizontal, 6)
                     Text(job.lastMessage).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if let job, let out = job.outputURL {
+                if let job, job.running == false, let out = job.outputURL {
                     Button("显示成片") {
                         NSWorkspace.shared.activateFileViewerSelecting([out])
                     }
+                } else if let job, job.running == false, job.outputURL == nil,
+                          job.currentStep != nil, job.error == nil {
+                    Text("未出成片：到任务中心「审核译文」，确认后继续转换")
+                        .font(.caption).foregroundStyle(.orange)
+                        .help("本任务停在中间步骤（如先生成译文待审核），或后续步骤尚未运行")
                 }
             }
             .padding(12)
@@ -122,6 +185,15 @@ struct RunBar: View {
             }
         }
         .background(.bar)
+    }
+
+    private var disabled: Bool {
+        videoURL.trimmingCharacters(in: .whitespaces).isEmpty || (job?.running ?? false)
+    }
+
+    private var disabledHint: String {
+        if job?.running == true { return "已有任务在运行" }
+        return "先在上方填入视频地址"
     }
 }
 

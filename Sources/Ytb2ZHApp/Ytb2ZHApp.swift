@@ -7,7 +7,7 @@ import Ytb2ZHEngines
 @main
 struct Ytb2ZHAppMain: App {
     var body: some Scene {
-        WindowGroup("Ytb2ZH") {
+        WindowGroup("ytb2zh 实时译配") {
             ContentView()
                 .frame(minWidth: 1080, minHeight: 700)
         }
@@ -15,77 +15,71 @@ struct Ytb2ZHAppMain: App {
     }
 }
 
-// MARK: - 主界面：左侧模板/任务，右侧参数 + 运行
+// MARK: - 主界面：侧栏导航（播放 / 媒体库 / 订阅 / 任务中心 / 转换设置）
+
+enum AppPage: String, CaseIterable, Identifiable {
+    case player = "播放"
+    case library = "媒体库"
+    case subscriptions = "订阅"
+    case jobs = "任务中心"
+    case settings = "转换设置"
+    case app = "应用设置"
+
+    var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .player: return "play.tv"
+        case .library: return "film.stack"
+        case .subscriptions: return "antenna.radiowaves.left.and.right"
+        case .jobs: return "list.bullet.rectangle"
+        case .settings: return "slider.horizontal.3"
+        case .app: return "gearshape"
+        }
+    }
+}
 
 struct ContentView: View {
+    @State private var page: AppPage = .player
     @State private var selectedTemplate: TemplateStore.Entry?
     @State private var workingProfile: Profile = .balanced
     @State private var videoURL = ""
     @State private var refreshTemplates = UUID()
     @State private var job: PipelineJob?
-    @State private var showJobCenter = false
+    @StateObject private var liveSession = LiveSession()
 
     private let templateStore = TemplateStore()
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(selected: $selectedTemplate, workingProfile: $workingProfile,
+            SidebarView(page: $page, selected: $selectedTemplate, workingProfile: $workingProfile,
                         refresh: $refreshTemplates, templateStore: templateStore)
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+                .navigationSplitViewColumnWidth(min: 210, ideal: 240)
         } detail: {
-            VStack(spacing: 0) {
-                // 模板起点信息
-                HStack {
-                    Label("基于模板：\(workingProfile.name)", systemImage: "square.stack")
-                        .font(.headline)
-                    Spacer()
-                    Button("任务中心") { showJobCenter = true }
-                        .controlSize(.regular)
-                    SaveTemplateMenu(profile: workingProfile, templateStore: templateStore) {
-                        refreshTemplates = UUID()
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-
-                Divider()
-
-                Form {
-                    Section("视频源") {
-                        TextField("YouTube URL", text: $videoURL)
-                            .textFieldStyle(.roundedBorder)
-                        LabeledContent("预设") {
-                            Picker("", selection: $workingProfile.name) {
-                                ForEach(templateStore.all()) { e in
-                                    Text(e.profile.name).tag(e.profile.name)
-                                }
-                            }
-                            .labelsHidden()
-                            .frame(width: 200)
-                            .onChange(of: workingProfile.name) { _, newName in
-                                if let e = templateStore.all().first(where: { $0.profile.name == newName }) {
-                                    workingProfile = e.profile
-                                }
-                            }
-                        }
-                    }
-
-                    EnginePickerRow(profile: $workingProfile)
-                    ParameterPanel(profile: $workingProfile)
-                }
-                .formStyle(.grouped)
-
-                Divider()
-
-                RunBar(videoURL: videoURL, profile: workingProfile, job: $job)
+            switch page {
+            case .player:
+                LivePlayerView(profile: workingProfile, session: liveSession)
+                    .navigationTitle("播放")
+            case .library:
+                LibraryView(profile: workingProfile, onPlayed: nil)
+                    .navigationTitle("媒体库")
+            case .subscriptions:
+                SubscriptionsView(profile: workingProfile) { }
+                    .navigationTitle("订阅")
+            case .jobs:
+                JobCenterView(job: job ?? PipelineJob())
+            case .settings:
+                SettingsPane(videoURL: $videoURL, workingProfile: $workingProfile,
+                             selectedTemplate: $selectedTemplate, refreshTemplates: $refreshTemplates,
+                             templateStore: templateStore, job: $job)
+                    .navigationTitle("转换设置")
+            case .app:
+                AppSettingsView()
+                    .navigationTitle("应用设置")
             }
-        }
-        .sheet(isPresented: $showJobCenter) {
-            JobCenterView(job: job ?? PipelineJob())
-                .frame(minWidth: 700, minHeight: 480)
         }
         .onReceive(NotificationCenter.default.publisher(for: .ytb2zhResumeJob)) { note in
             guard let req = note.object as? ResumeRequest else { return }
+            page = .jobs
             resume(req)
         }
     }
@@ -109,21 +103,32 @@ struct ContentView: View {
     }
 }
 
-// MARK: - 侧栏：模板列表
+// MARK: - 侧栏：功能导航 + 模板起点
 
 struct SidebarView: View {
+    @Binding var page: AppPage
     @Binding var selected: TemplateStore.Entry?
     @Binding var workingProfile: Profile
     @Binding var refresh: UUID
     let templateStore: TemplateStore
 
     var body: some View {
-        List {
-            Section("模板（点按载入为起点）") {
+        List(selection: $page) {
+            Section {
+                ForEach([AppPage.player, .library, .subscriptions, .jobs]) { p in
+                    Label(p.rawValue, systemImage: p.icon).tag(p)
+                }
+            }
+            Section("高级") {
+                Label(AppPage.settings.rawValue, systemImage: AppPage.settings.icon).tag(AppPage.settings)
+                Label(AppPage.app.rawValue, systemImage: AppPage.app.icon).tag(AppPage.app)
+            }
+            Section("模板起点（载入后到转换设置微调）") {
                 ForEach(templateStore.all()) { entry in
                     Button {
                         workingProfile = entry.profile.derived(named: entry.profile.name)
                         selected = entry
+                        page = .settings
                     } label: {
                         HStack {
                             Image(systemName: entry.location == .builtin ? "lock.fill" : "person.crop.circle")
@@ -141,9 +146,81 @@ struct SidebarView: View {
         .id(refresh)
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) {
-            Text("调整参数后可另存为用户模板")
+            Text("模板决定翻译风格与引擎组合；调整参数后可另存为用户模板")
                 .font(.caption2).foregroundStyle(.secondary)
                 .padding(8)
+        }
+    }
+}
+
+// MARK: - 转换设置页（高级）：视频源 + 引擎 + 参数 + 批量转换
+
+struct SettingsPane: View {
+    @Binding var videoURL: String
+    @Binding var workingProfile: Profile
+    @Binding var selectedTemplate: TemplateStore.Entry?
+    @Binding var refreshTemplates: UUID
+    let templateStore: TemplateStore
+    @Binding var job: PipelineJob?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label("基于模板：\(workingProfile.name)", systemImage: "square.stack")
+                    .font(.headline)
+                Spacer()
+                SaveTemplateMenu(profile: workingProfile, templateStore: templateStore) {
+                    refreshTemplates = UUID()
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            Form {
+                Section("视频源 · 后台完整转换（质量优先，完成入媒体库）") {
+                    TextField("YouTube URL", text: $videoURL, prompt: Text("粘贴视频 / 频道 / 播放列表地址"))
+                        .textFieldStyle(.roundedBorder)
+                    LabeledContent("预设") {
+                        Picker("", selection: $workingProfile.name) {
+                            ForEach(templateStore.all()) { e in
+                                Text(e.profile.name).tag(e.profile.name)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 200)
+                        .onChange(of: workingProfile.name) { _, newName in
+                            if let e = templateStore.all().first(where: { $0.profile.name == newName }) {
+                                workingProfile = e.profile
+                            }
+                        }
+                    }
+                    LabeledContent("代理 / 模型提供者") {
+                        Text(AppSettings.proxy.isEmpty
+                             ? "未设全局代理，用模板内置；点侧栏「应用设置」统一配置"
+                             : "全局代理 \(AppSettings.proxy)；在侧栏「应用设置」修改")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                    }
+                    LabeledContent("想边处理边看？") {
+                        Text("改用侧栏「播放」页：处理到哪看到哪，无需等整片完成")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                    }
+                }
+
+                Section {
+                    EnginePickerRow(profile: $workingProfile)
+                }
+
+                ParameterPanel(profile: $workingProfile)
+            }
+            .formStyle(.grouped)
+
+            Divider()
+
+            RunBar(videoURL: videoURL, profile: workingProfile, job: $job)
         }
     }
 }

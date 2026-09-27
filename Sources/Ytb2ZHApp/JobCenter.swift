@@ -6,11 +6,11 @@ import Ytb2ZHEngines
 
 @MainActor
 struct JobCenterView: View {
-    @Environment(\.dismiss) private var dismiss
     @ObservedObject var job: PipelineJob
     @State private var jobs: [(id: String, status: JobStore.Status)] = []
     @State private var editingUnits: String?      // jobID
     @State private var editingTerms: String?
+    @State private var detail: String?            // 任务详情页 jobID
     private let store = JobStore()
 
     var body: some View {
@@ -24,13 +24,15 @@ struct JobCenterView: View {
                                onResume: { resume(j.id) },
                                onEditUnits: { editingUnits = j.id },
                                onEditTerms: { editingTerms = j.id },
-                               onReveal: { reveal(j.id) })
+                               onReveal: { reveal(j.id) },
+                               onDetail: { detail = j.id })
+                            .contentShape(Rectangle())
+                            .onTapGesture { detail = j.id }
                     }
                 }
                 .listStyle(.inset)
             }
         }
-        .frame(minWidth: 640, minHeight: 420)
         .navigationTitle("任务中心")
         .onAppear(perform: reload)
         .sheet(item: Binding(
@@ -42,6 +44,13 @@ struct JobCenterView: View {
             get: { editingTerms.map { JobRef(id: $0) } },
             set: { editingTerms = $0?.id })) { ref in
             TerminologyEditorView(jobID: ref.id) { reload() }
+        }
+        .sheet(item: Binding(
+            get: { detail.map { JobRef(id: $0) } },
+            set: { detail = $0?.id })) { ref in
+            JobDetailView(jobID: ref.id, job: job,
+                          onEditUnits: { editingUnits = ref.id },
+                          onEditTerms: { editingTerms = ref.id })
         }
     }
 
@@ -56,7 +65,6 @@ struct JobCenterView: View {
         let pending = Set(status.steps.filter { $0.value != .done }.keys.compactMap { StepID(rawValue: $0) })
         job.start(url: status.url, profile: Profile(name: status.profileName),
                   jobID: jobID, stepFilter: pending)
-        dismiss()
     }
 
     private func reveal(_ jobID: String) {
@@ -72,6 +80,7 @@ struct JobRow: View {
     let onEditUnits: () -> Void
     let onEditTerms: () -> Void
     let onReveal: () -> Void
+    var onDetail: () -> Void = {}
 
     private var doneCount: Int { status.steps.values.filter { $0 == .done }.count }
     private var hasFailed: Bool { status.steps.values.contains(.failed) }
@@ -81,6 +90,13 @@ struct JobRow: View {
             HStack {
                 Text(jobID).font(.system(.caption, design: .monospaced))
                 Text(status.profileName).font(.caption).foregroundStyle(.secondary)
+                if status.isTrial {
+                    Text("试转").font(.caption2)
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Capsule().fill(.orange.opacity(0.18)))
+                        .foregroundStyle(.orange)
+                        .help("试转任务：只处理前几分钟的小样，验证配置；确认后请用「开始转换」跑全片")
+                }
                 if hasFailed {
                     Text("有失败步骤").font(.caption2)
                         .padding(.horizontal, 6).padding(.vertical, 1)
@@ -92,17 +108,23 @@ struct JobRow: View {
                     .font(.caption).monospacedDigit().foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
+                Button("详情") { onDetail() }.controlSize(.small)
                 Button("续跑") { onResume() }.controlSize(.small)
-                Button("编辑译文") { onEditUnits() }.controlSize(.small)
+                // 成片尚未产出时，入口文案提示审核语义（翻译已就绪但未转换的任务尤其需要）
+                Button(composeDone ? "编辑译文" : "审核译文") { onEditUnits() }.controlSize(.small)
+                    .help(composeDone ? "修改已出片任务的译文，改完可从合成步续跑重新出片"
+                                     : "逐条核对/修改中文译文，改完点「保存并继续转换」出成片（不重翻）")
                 Button("编辑术语") { onEditTerms() }.controlSize(.small)
                 Button("打开目录") { onReveal() }.controlSize(.small)
             }
         }
         .padding(.vertical, 2)
     }
+
+    private var composeDone: Bool { status.steps[StepID.compose.rawValue] == .done }
 }
 
-// MARK: - 译文单元编辑器（改 zh / voice 后从翻译步续跑）
+// MARK: - 译文单元编辑器（改 zh / voice；审核后从合成步续跑，人工译文优先）
 
 @MainActor
 struct UnitsEditorView: View {
@@ -117,7 +139,7 @@ struct UnitsEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("译文编辑（\(units.count) 单元）").font(.headline)
+                Text("译文审核/编辑（\(units.count) 单元）").font(.headline)
                 Spacer()
                 Text("voice 留空 = 默认音色").font(.caption).foregroundStyle(.secondary)
             }.padding(12)
@@ -148,14 +170,24 @@ struct UnitsEditorView: View {
                 Button("取消") { dismiss() }
                 Spacer()
                 Button("保存") { save() }
-                Button("保存并从翻译步续跑") {
+                // 主路径：确认译文 → 从合成步继续（保留人工译文，只重做配音/调度/成片）
+                Button("保存并继续转换") {
+                    save()
+                    dismiss()
+                    NotificationCenter.default.post(
+                        name: .ytb2zhResumeJob, object: ResumeRequest(jobID: jobID, from: .synthesize))
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+                .help("使用当前译文（含人工修改）直接合成配音、调度、出成片；不再重新翻译")
+                // 次路径：改完术语想整体重翻
+                Button("保存并重新翻译") {
                     save()
                     dismiss()
                     NotificationCenter.default.post(
                         name: .ytb2zhResumeJob, object: ResumeRequest(jobID: jobID, from: .translate))
                 }
-                .keyboardShortcut(.return)
-                .buttonStyle(.borderedProminent)
+                .help("丢弃全部译文重新机器翻译（人工修改会被覆盖）。适合改完术语表后重翻，而不适合微调译文")
             }
             .padding(12)
         }
