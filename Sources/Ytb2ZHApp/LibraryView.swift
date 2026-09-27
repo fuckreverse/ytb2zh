@@ -34,9 +34,7 @@ final class LibraryModel: ObservableObject {
     @Published var items: [Item] = []
     @Published private(set) var isBackfilling = false
     @Published private(set) var backfilledCount = 0
-    /// 本会话内拉取失败的 URL（不重试，手动刷新可重试）
-    private var failedURLs: Set<String> = []
-    private var backfillTask: Task<Void, Never>?
+    private let backfiller = MetaBackfiller()
 
     func reload(store: JobStore = JobStore()) {
         let meta = SubscriptionStore.shared.videoMeta
@@ -57,38 +55,16 @@ final class LibraryModel: ObservableObject {
                         details: d)
         }
         .sorted { $0.createdAt > $1.createdAt }
-        backfillMissing()
+        isBackfilling = true
+        backfiller.backfill(urls: items.map(\.url)) { [weak self] in
+            self?.backfilledCount += 1
+            self?.reloadAfterBackfill()
+        }
+        if !backfiller.isRunning { isBackfilling = false }
     }
 
-    /// 后台补齐缺失元数据（逐个串行避免打爆，失败本会话跳过）
-    private func backfillMissing() {
-        guard !isBackfilling else { return }
-        let missing = Array(Set(VideoInfoStore.shared.missingURLs(in: items.map(\.url))))
-            .filter { !failedURLs.contains($0) }
-        guard !missing.isEmpty else { return }
-        isBackfilling = true
-        backfilledCount = 0
-        let proxy = AppSettings.effectiveProxy(fallback: "")
-        backfillTask = Task { [weak self] in
-            let service = VideoInfoService()
-            for url in missing {
-                if Task.isCancelled { break }
-                let result = await Task.detached {
-                    try? service.fetch(url, proxy: proxy)
-                }.value
-                guard let self else { break }
-                if let d = result {
-                    VideoInfoStore.shared.upsert(d)
-                    self.failedURLs.remove(url)
-                    self.backfilledCount += 1
-                    self.reloadAfterBackfill()
-                } else {
-                    self.failedURLs.insert(url)
-                }
-            }
-            self?.isBackfilling = false
-        }
-    }
+    /// 手动刷新时清空失败记录，允许重试拉取元数据
+    func backfillReset() { backfiller.resetFailures() }
 
     /// 补齐途中增量刷新已入库条目的频道/时长/详情（保持用户滚动位置，不整体 reload）
     private func reloadAfterBackfill() {
@@ -108,7 +84,7 @@ final class LibraryModel: ObservableObject {
         }
     }
 
-    deinit { backfillTask?.cancel() }
+    // backfiller 的补齐任务在其自身 deinit 中取消
 }
 
 struct LibraryView: View {
@@ -162,7 +138,7 @@ struct LibraryView: View {
                 Spacer()
                 Picker("分组", selection: $groupModeRaw) {
                     ForEach(LibraryGroupMode.allCases, id: \.rawValue) { m in
-                        Text(m.label).tag(m.rawValue)
+                        Text(L(m.label)).tag(m.rawValue)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -172,6 +148,7 @@ struct LibraryView: View {
                     .frame(width: 200)
                 Button {
                     playing = nil
+                    model.backfillReset()
                     model.reload()
                 } label: { Label("刷新", systemImage: "arrow.clockwise") }
             }
@@ -495,7 +472,7 @@ final class SubscriptionRunner: ObservableObject {
     func convert(videos: [CatalogVideo], profile: Profile, onProgress: @escaping () -> Void) {
         guard !running, !videos.isEmpty else { return }
         running = true
-        progressText = "检查待处理…"
+        progressText = L10n.tr("检查待处理…")
         doneCount = 0; total = 0
         logLines = []
         let runProfile = AppSettings.applied(profile)
@@ -507,7 +484,7 @@ final class SubscriptionRunner: ObservableObject {
                 if let (id, _) = store.allJobs().first(where: {
                     $1.url == v.url && $1.profileName == runProfile.name
                 }), store.hasFinalVideo(id) {
-                    append("跳过（已有成品）：\(v.title)")
+                    append(String(format: L10n.tr("跳过（已有成品）：%@"), v.title))
                     continue
                 }
                 pending.append(v)
@@ -515,7 +492,7 @@ final class SubscriptionRunner: ObservableObject {
 
             total = pending.count
             if pending.isEmpty {
-                append("所选视频均已是成品，无需处理")
+                append(L10n.tr("所选视频均已是成品，无需处理"))
                 finish()
                 return
             }
@@ -529,18 +506,18 @@ final class SubscriptionRunner: ObservableObject {
                     id = existing
                 } else {
                     guard let nid = try? store.newJob(url: v.url, profile: runProfile) else {
-                        append("〔\(i + 1)/\(total)〕任务创建失败：\(v.title)")
+                        append(String(format: L10n.tr("〔%lld/%lld〕任务创建失败：%@"), i + 1, total, v.title))
                         continue
                     }
                     id = nid
                 }
-                progressText = "〔\(i + 1)/\(total)〕\(v.title)"
-                append("开始：\(v.title)")
+                progressText = String(format: L10n.tr("〔%lld/%lld〕%@"), i + 1, total, v.title)
+                append(String(format: L10n.tr("开始：%@"), v.title))
                 await runJob(jobID: id, url: v.url, profile: runProfile)
                 if store.hasFinalVideo(id) {
-                    append("完成：\(v.title)")
+                    append(String(format: L10n.tr("完成：%@"), v.title))
                 } else {
-                    append("失败（可在任务中心续跑）：\(v.title)")
+                    append(String(format: L10n.tr("失败（可在任务中心续跑）：%@"), v.title))
                 }
                 doneCount = i + 1
                 onProgress()
@@ -551,13 +528,13 @@ final class SubscriptionRunner: ObservableObject {
 
     private func finish() {
         running = false
-        progressText = total > 0 ? "完成 \(doneCount)/\(total)" : "空闲"
+        progressText = total > 0 ? String(format: L10n.tr("完成 %lld/%lld"), doneCount, total) : L10n.tr("空闲")
     }
 
     private func runJob(jobID: String, url: String, profile: Profile) async {
         let (stream, cont) = AsyncStream<PipelineEvent>.makeStream(bufferingPolicy: .unbounded)
         guard let engines = try? EngineAssembly.engineSet(for: profile) else {
-            append("引擎装配失败（Profile: \(profile.name)）")
+            append(String(format: L10n.tr("引擎装配失败（Profile: %@）"), profile.name))
             cont.finish()
             return
         }
@@ -570,13 +547,13 @@ final class SubscriptionRunner: ObservableObject {
         for await ev in stream {
             switch ev {
             case .stepStarted(let s):
-                progressText = progressText + " · " + Self.stepName(s)
+                progressText = progressText + " · " + L10n.tr(Self.stepName(s))
             case .progress(_, _, let msg):
-                if let msg, !msg.isEmpty { progressText = progressText + " · \(msg)" }
+                if let msg, !msg.isEmpty { progressText = progressText + " · " + L10n.tr(msg) }
             case .log(let l):
                 append(l)
             case .failed(_, let m):
-                append("失败：\(m)")
+                append(String(format: L10n.tr("失败：%@"), m))
             default:
                 break
             }
@@ -616,6 +593,9 @@ struct SubscriptionsView: View {
     @State private var checked: Set<String> = []
     @State private var detailVideo: CatalogVideo?
     @State private var playTarget: CatalogVideo?
+    @State private var origTarget: CatalogVideo?
+    @State private var renameTarget: SubscriptionStore.Subscription?
+    @State private var renameText = ""
 
     private let columns = [GridItem(.adaptive(minimum: 200, maximum: 260), spacing: 16)]
 
@@ -769,6 +749,12 @@ struct SubscriptionsView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            Button {
+                renameText = sub.name
+                renameTarget = sub
+            } label: {
+                Label("重命名…", systemImage: "pencil")
+            }
             Button(role: .destructive) {
                 store.remove(sub.id)
                 checked = []
@@ -867,6 +853,13 @@ struct SubscriptionsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                origTarget = v
+            } label: {
+                Label("看原版（不翻译）", systemImage: "film")
+            }
+        }
     }
 
     /// 多选模式卡片：未完成的可勾选，已有成品的置灰
@@ -957,29 +950,45 @@ struct SubscriptionsView: View {
         let subID = sub.id
         let proxy = AppSettings.effectiveProxy(fallback: profile.download.proxy)
         Task {
-            var vids = await Task.detached {
-                (try? VideoCatalogService().search(url, limit: 12, proxy: proxy)) ?? []
-            }.value
+            var page = await Self.fetchPage(url: url, limit: 12, proxy: proxy)
             // 频道主页（@handle 等）首层返回的是 tab 条目（Videos/Shorts…）而非视频，
             // 优先挑 /videos tab 自动下钻一层取真正的视频列表
-            if vids.contains(where: { !SubscriptionsView.isVideoURL($0.url) }) {
-                let tab = vids.first(where: { $0.url.lowercased().hasSuffix("/videos") })?.url
-                    ?? vids.first(where: { !SubscriptionsView.isVideoURL($0.url) })?.url
+            if page.videos.contains(where: { !SubscriptionsView.isVideoURL($0.url) }) {
+                let tab = page.videos.first(where: { $0.url.lowercased().hasSuffix("/videos") })?.url
+                    ?? page.videos.first(where: { !SubscriptionsView.isVideoURL($0.url) })?.url
                 if let tab, !tab.isEmpty {
-                    vids = await Task.detached {
-                        (try? VideoCatalogService().search(tab, limit: 12, proxy: proxy)) ?? []
-                    }.value
+                    page = await Self.fetchPage(url: tab, limit: 12, proxy: proxy)
                 }
             }
             // 兜底：混入的非视频条目剔除（全部被剔则保留原样，避免空列表）
-            let onlyVideos = vids.filter { SubscriptionsView.isVideoURL($0.url) }
-            if !onlyVideos.isEmpty { vids = onlyVideos }
+            let onlyVideos = page.videos.filter { SubscriptionsView.isVideoURL($0.url) }
+            let vids = onlyVideos.isEmpty ? page.videos : onlyVideos
             refreshing = false
             if vids.isEmpty {
                 refreshError = "未获取到视频（检查网络/代理与链接有效性）"
             } else {
                 SubscriptionStore.shared.updateVideos(id: subID, videos: vids)
+                autoName(subID: subID, pageTitle: page.title, videos: vids)
             }
+        }
+    }
+
+    private static func fetchPage(url: String, limit: Int, proxy: String) async -> VideoCatalogService.CatalogPage {
+        await Task.detached {
+            (try? VideoCatalogService().searchPage(url, limit: limit, proxy: proxy))
+                ?? VideoCatalogService.CatalogPage(title: nil, videos: [])
+        }.value
+    }
+
+    /// 自动命名：占位名（「订阅 N」）在首次拉到列表后，用频道/播放列表标题命名；手动改过的不动
+    private func autoName(subID: UUID, pageTitle: String?, videos: [CatalogVideo]) {
+        let store = SubscriptionStore.shared
+        guard let sub = store.subs.first(where: { $0.id == subID }), sub.autoNamed == true else { return }
+        var candidates: [String] = []
+        if let t = pageTitle, !t.isEmpty { candidates.append(t) }
+        candidates.append(contentsOf: videos.compactMap(\.channel))
+        if let name = candidates.first(where: { !$0.isEmpty }) {
+            store.rename(id: subID, name: name, isAuto: true)
         }
     }
 
@@ -1047,6 +1056,7 @@ private struct VideoConvertSheet: View {
     let busy: Bool
     let onConvert: () -> Void
     let onPlay: () -> Void
+    let onOriginal: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     private var statusText: (String, Color) {
@@ -1087,6 +1097,14 @@ private struct VideoConvertSheet: View {
                 Spacer()
                 Button {
                     dismiss()
+                    onOriginal()
+                } label: {
+                    Label("看原版", systemImage: "film")
+                }
+                .buttonStyle(.bordered)
+                .help("不翻译，直接流式播放原声，进度条可任意拖动")
+                Button {
+                    dismiss()
                     onPlay()
                 } label: {
                     Label(status == .done ? "播放译制成品" : "实时播放（边下边译）",
@@ -1119,7 +1137,7 @@ private struct VideoConvertSheet: View {
             let s = Int(video.duration.rounded())
             parts.append(String(format: "%d:%02d", s / 60, s % 60))
         }
-        if let n = video.viewCount { parts.append("\(n) 次播放") }
+        if let n = video.viewCount { parts.append(L10n.isEnglish ? "\(n) plays" : "\(n) 次播放") }
         return parts.joined(separator: " · ")
     }
 }

@@ -23,7 +23,7 @@ struct AppSettingsView: View {
         VStack(spacing: 0) {
             Picker("", selection: $tab) {
                 ForEach(Tab.allCases) { t in
-                    Text(t.rawValue).tag(t)
+                    Text(L(t.rawValue)).tag(t)
                 }
             }
             .pickerStyle(.segmented)
@@ -131,7 +131,7 @@ private struct NetworkTab: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
-        panel.message = "选择任务存储目录（新任务的 Jobs 根目录）"
+        panel.message = L10n.tr("选择任务存储目录（新任务的 Jobs 根目录）")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         UserDefaults.standard.set(url.path, forKey: AppSettings.jobRootKey)
         jobRootPath = JobStore().root.path
@@ -164,7 +164,7 @@ private struct ProvidersTab: View {
             Section {
                 Menu {
                     ForEach(ProviderKind.allCases) { k in
-                        Button(k.label) { store.add(k) }
+                        Button(L(k.label)) { store.add(k) }
                     }
                 } label: {
                     Label("添加提供商", systemImage: "plus")
@@ -186,7 +186,7 @@ private struct ProviderSection: View {
             LabeledContent("类型") {
                 Picker("", selection: pr.kind) {
                     ForEach(ProviderKind.allCases) { k in
-                        Text(k.label).tag(k)
+                        Text(L(k.label)).tag(k)
                     }
                 }
                 .labelsHidden()
@@ -198,7 +198,7 @@ private struct ProviderSection: View {
                     .frame(width: 340)
             }
             if pr.wrappedValue.kind.needsBaseURL {
-                LabeledContent(pr.wrappedValue.kind.baseURLLabel) {
+                LabeledContent(L(pr.wrappedValue.kind.baseURLLabel)) {
                     TextField(pr.wrappedValue.kind.defaultBaseURL, text: pr.baseURL)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 340)
@@ -227,7 +227,7 @@ private struct ProviderSection: View {
             }
             .padding(.vertical, 4)
 
-            Text(pr.wrappedValue.kind.hint)
+            Text(L(pr.wrappedValue.kind.hint))
                 .font(.caption2).foregroundStyle(.secondary)
 
             HStack {
@@ -239,7 +239,7 @@ private struct ProviderSection: View {
                 .font(.caption)
             }
         } header: {
-            Text(pr.wrappedValue.name.isEmpty ? "未命名提供商" : pr.wrappedValue.name)
+            Text(pr.wrappedValue.name.isEmpty ? L10n.tr("未命名提供商") : pr.wrappedValue.name)
         }
     }
 
@@ -273,7 +273,7 @@ private struct ProviderSection: View {
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 200)
             ForEach(ModelCapability.allCases) { cap in
-                Toggle(cap.label, isOn: capBinding(modelBinding(modelID), cap))
+                Toggle(L(cap.label), isOn: capBinding(modelBinding(modelID), cap))
                     .toggleStyle(.checkbox)
                     .font(.caption)
             }
@@ -325,7 +325,7 @@ private struct AssignTab: View {
         Form {
             Section {
                 ForEach(needs) { n in
-                    LabeledContent(n.step.label) {
+                    LabeledContent(L(n.step.label)) {
                         VStack(alignment: .trailing, spacing: 2) {
                             Picker("", selection: binding(n.step)) {
                                 Text("跟随模板").tag("")

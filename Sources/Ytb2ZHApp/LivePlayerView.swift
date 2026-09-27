@@ -280,7 +280,7 @@ struct LivePlayerView: View {
 
             if session.converting {
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(session.convertingPhase.isEmpty ? "处理中" : session.convertingPhase)：已配音 \(LivePlayerView.mmss(session.dubbedSeconds)) / 全片 \(LivePlayerView.mmss(session.totalSeconds))")
+                    Text("\(session.convertingPhase.isEmpty ? L10n.tr("处理中") : L10n.tr(session.convertingPhase))：已配音 \(LivePlayerView.mmss(session.dubbedSeconds)) / 全片 \(LivePlayerView.mmss(session.totalSeconds))")
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     ProgressView(value: session.totalSeconds > 0
                                  ? min(1, session.dubbedSeconds / max(1, session.totalSeconds))
@@ -294,7 +294,7 @@ struct LivePlayerView: View {
     private var statusBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(session.mode == .original && session.player != nil ? "原声播放" : session.phaseTitle)
+                Text(L10n.tr(session.mode == .original && session.player != nil ? "原声播放" : session.phaseTitle))
                     .font(.headline)
                 Spacer()
                 if session.totalSeconds > 0 && (session.mode == .chinese || session.converting) {
@@ -306,10 +306,10 @@ struct LivePlayerView: View {
                 ProgressView(value: session.progress)
             }
             if !session.detail.isEmpty {
-                Text(session.detail).font(.caption).foregroundStyle(.secondary)
+                Text(L10n.tr(session.detail)).font(.caption).foregroundStyle(.secondary)
             }
             if !session.errorText.isEmpty {
-                Label(session.errorText, systemImage: "exclamationmark.triangle.fill")
+                Label(L10n.tr(session.errorText), systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red).font(.callout)
             }
             if session.finished {
@@ -543,7 +543,7 @@ final class LiveSession: ObservableObject {
             jobID = existing
         } else {
             do { jobID = try store.newJob(url: u, profile: profile) } catch {
-                errorText = "任务创建失败：\(error.localizedDescription)"; isRunning = false; return
+                errorText = String(format: L10n.tr("任务创建失败：%@"), error.localizedDescription); isRunning = false; return
             }
         }
         activeJobID = jobID
@@ -600,7 +600,7 @@ final class LiveSession: ObservableObject {
         // 下载原片 → 播放（成品 job，后续转换免二次下载）
         let jobID: String
         do { jobID = try store.newJob(url: u, profile: applied) } catch {
-            errorText = "任务创建失败：\(error.localizedDescription)"; return
+            errorText = String(format: L10n.tr("任务创建失败：%@"), error.localizedDescription); return
         }
         activeJobID = jobID
         downloadingOriginal = true
@@ -622,7 +622,7 @@ final class LiveSession: ObservableObject {
                 } catch is CancellationError {
                     // stop()：静默取消
                 } catch {
-                    continuation.yield(.failed("原声下载失败：\(error.localizedDescription)"))
+                    continuation.yield(.failed(String(format: L10n.tr("原声下载失败：%@"), error.localizedDescription)))
                 }
                 continuation.finish()
             }
@@ -706,7 +706,7 @@ final class LiveSession: ObservableObject {
             jobID = existing; activeJobID = existing
         } else {
             do { jobID = try store.newJob(url: activeURL, profile: activeProfile) } catch {
-                errorText = "任务创建失败：\(error.localizedDescription)"; return
+                errorText = String(format: L10n.tr("任务创建失败：%@"), error.localizedDescription); return
             }
             activeJobID = jobID
         }
@@ -773,7 +773,7 @@ final class LiveSession: ObservableObject {
         var playable = file
         if !MediaCompat.isNativePlayable(file) {
             phaseTitle = "转码原片"
-            detail = "缓存原片是 \(file.pathExtension.uppercased()) 容器，AVPlayer 不支持，转码 MP4 中…"
+            detail = String(format: L10n.tr("缓存原片是 %@ 容器，AVPlayer 不支持，转码 MP4 中…"), file.pathExtension.uppercased())
             do {
                 playable = try await MediaCompat.transcodeToPlayableMP4(file) { [weak self] p, m in
                     Task { @MainActor [weak self] in
@@ -783,7 +783,7 @@ final class LiveSession: ObservableObject {
                 }
                 sourceURL = playable
             } catch {
-                errorText = "原片转码失败：\(error.localizedDescription)"
+                errorText = String(format: L10n.tr("原片转码失败：%@"), error.localizedDescription)
                 phaseTitle = "失败"
                 return
             }

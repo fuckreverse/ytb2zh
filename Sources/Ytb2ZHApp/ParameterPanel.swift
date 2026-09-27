@@ -11,8 +11,8 @@ struct EnginePickerRow: View {
     var body: some View {
         Section("引擎（可插拔）") {
             ForEach(registry.offers, id: \.step) { offer in
-                LabeledContent(offer.step.label) {
-                    Picker(offer.step.rawValue, selection: binding(for: offer.step)) {
+                LabeledContent(L(offer.step.label)) {
+                    Picker(L(offer.step.rawValue), selection: binding(for: offer.step)) {
                         ForEach(offer.descriptors, id: \.id) { d in
                             Text(d.name).tag(d.id)
                         }
@@ -72,7 +72,7 @@ struct ParameterPanel: View {
             LabeledContent("风格") {
                 Picker("", selection: $profile.translate.style) {
                     ForEach(TranslationStyle.allCases, id: \.self) { s in
-                        Text(s.label).tag(s)
+                        Text(L(s.label)).tag(s)
                     }
                 }
                 .labelsHidden()
@@ -81,7 +81,7 @@ struct ParameterPanel: View {
             LabeledContent("质量") {
                 Picker("", selection: $profile.translate.quality) {
                     ForEach(TranslationQuality.allCases, id: \.self) { q in
-                        Text(q.label).tag(q)
+                        Text(L(q.label)).tag(q)
                     }
                 }
                 .labelsHidden()

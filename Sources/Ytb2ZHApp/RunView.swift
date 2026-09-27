@@ -211,7 +211,7 @@ struct PipelineProgressView: View {
                     Image(systemName: icon(for: step))
                         .foregroundStyle(color(for: step))
                         .frame(width: 18)
-                    Text(step.label).frame(width: 72, alignment: .leading)
+                    Text(L(step.label)).frame(width: 72, alignment: .leading)
                     ProgressView(value: job.stepProgress[step] ?? 0)
                         .frame(maxWidth: 380)
                     if job.currentStep == step {

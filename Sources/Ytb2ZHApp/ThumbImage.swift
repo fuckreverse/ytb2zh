@@ -60,9 +60,9 @@ extension CatalogVideo {
     /// 观看数文案（无尾随 .0）
     var viewCountText: String? {
         guard let v = viewCount, v > 0 else { return nil }
-        if v >= 10_000_000 { return Self.trimNum(Double(v) / 10_000_000) + " 千万次观看" }
-        if v >= 10_000 { return Self.trimNum(Double(v) / 10_000) + " 万次观看" }
-        return "\(v) 次观看"
+        if v >= 10_000_000 { return Self.trimNum(Double(v) / 10_000_000) + (L10n.isEnglish ? "×10M views" : " 千万次观看") }
+        if v >= 10_000 { return Self.trimNum(Double(v) / 10_000) + (L10n.isEnglish ? "×10K views" : " 万次观看") }
+        return L10n.isEnglish ? "\(v) views" : "\(v) 次观看"
     }
 
     private static func trimNum(_ d: Double) -> String {

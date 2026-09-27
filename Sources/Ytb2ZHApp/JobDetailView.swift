@@ -97,7 +97,7 @@ struct JobDetailView: View {
                 ForEach(Array(StepID.allCases.enumerated()), id: \.element) { idx, step in
                     HStack(spacing: 10) {
                         stepIcon(step)
-                        Text(step.label)
+                        Text(L(step.label))
                         if job.running && job.currentStep == step {
                             Text("进行中…").font(.caption).foregroundStyle(.orange)
                         }

@@ -116,12 +116,12 @@ struct SidebarView: View {
         List(selection: $page) {
             Section {
                 ForEach([AppPage.player, .library, .subscriptions, .jobs]) { p in
-                    Label(p.rawValue, systemImage: p.icon).tag(p)
+                    Label(L(p.rawValue), systemImage: p.icon).tag(p)
                 }
             }
             Section("高级") {
-                Label(AppPage.settings.rawValue, systemImage: AppPage.settings.icon).tag(AppPage.settings)
-                Label(AppPage.app.rawValue, systemImage: AppPage.app.icon).tag(AppPage.app)
+                Label(L(AppPage.settings.rawValue), systemImage: AppPage.settings.icon).tag(AppPage.settings)
+                Label(L(AppPage.app.rawValue), systemImage: AppPage.app.icon).tag(AppPage.app)
             }
             Section("模板起点（载入后到转换设置微调）") {
                 ForEach(templateStore.all()) { entry in
