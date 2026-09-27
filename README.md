@@ -1,8 +1,21 @@
 # ytb2zh
 
-英文视频 → 中文字幕 + 中文配音 的 macOS 客户端。Swift 单语言实现，外部能力（yt-dlp / whisper.cpp / ffmpeg / edge-tts / demucs）全部以 sidecar 接入，每一步都是协议化可插拔引擎。
+英文视频 → 中文字幕 + 中文配音 的 macOS 客户端，以及一个"边处理边播放"的实时中文配音播放器（伪直播模式）。Swift 单语言实现，外部能力（yt-dlp / whisper.cpp / ffmpeg / edge-tts / demucs）全部以 sidecar 接入，每一步都是协议化可插拔引擎。
 
 架构源自 vid2zh 管线（`~/vid2zh`，Python 原型，已验证全片效果），本仓库是工程化客户端版本。功能吸收自 VideoLingo / pyVideoTrans 的评估结论（术语表、三步翻译、Netflix 字幕标准、多通道引擎、批量任务、断点编辑等）。
+
+## 实时播放器（追赶式伪直播）
+
+GUI 右上角"实时播放"：贴 URL 或在搜索栏点选封面，处理到哪看到哪——
+
+- **模型**：下载/转录/切分全篇执行（保证语义切分质量，产物与批量任务互通），翻译→合成→调度→配音轨→分片按 ~60s 语音窗口滚动推进；每窗口产出 MPEG-TS 分片并追加进 EVENT 型 HLS 播放列表，AVPlayer 以"直播流"形式消费。处理速度约 4x 实时，始终跑在播放前面，seek 可回看任意已配音区间。
+- **播放通道**：不走本地 HTTP——AVAssetResourceLoaderDelegate + 自定义 scheme `ytb2zh-live://<token>/live.m3u8` 磁盘直读分片，零 ATS 风险。
+- **实时双语字幕**：每窗口增量重写 SRT，播放器按 0.25s 轮询同步显示当前字幕（双语随 Profile）。
+- **重播秒开**：同 URL + 同 Profile 的已完成任务直接复用已生成的直播目录与成片，零等待开播。
+- **搜索浏览**：yt-dlp `-J --flat-playlist` 搜索（关键词 / 频道页 / 播放列表 URL 通用），封面墙点选即播。
+- **媒体库**：所有已产出成片的任务（直播或批量）在"媒体库"封面墙里一键秒播，优先复用直播目录，无则成片直读；Profile 自动取任务派生参数快照（`JobStore.loadProfileSnapshot`）。
+- **订阅预翻译**："订阅"里添加频道/播放列表，点"预翻译"自动扫最新视频、跳过已在库的，按序后台跑完整批量管线；完成即入媒体库随时秒播。未完成任务自动断点续跑。
+- **终局产物**：`#EXT-X-ENDLIST` + SRT + concat 成片 `final_zh.mp4`，与批量管线产物同构。
 
 ## 管线（九步，可选步默认关闭）
 
@@ -44,10 +57,10 @@ auto    demucs*   whisper  punct/LLM  gateway-terms*  LLM    百炼/兼容/Edge 
 
 ```
 Sources/Ytb2ZHCore/      模型、九步协议、Profile/模板、JobStore、Pipeline 编排（无引擎依赖）
-Sources/Ytb2ZHEngines/   引擎实现（sidecar 包装 / API 客户端 / 纯算法）
+Sources/Ytb2ZHEngines/   引擎实现（sidecar 包装 / API 客户端 / 纯算法）+ LivePipeline 直播管线 + VideoCatalogService
 Sources/ytb2zh/          CLI：run / batch / templates / providers / jobs / verify
-Sources/Ytb2ZHApp/       SwiftUI GUI（参数全部控件化：滑杆/步进器/选择器 + 任务中心）
-Tests/                   单测（调度器 fixture / 切分 / SRT / Netflix 字幕 / 三步翻译 / 模板兼容 / JobStore）
+Sources/Ytb2ZHApp/       SwiftUI GUI（参数面板 + 任务中心 + 实时播放器）
+Tests/                   单测（调度器 fixture / 切分 / SRT / Netflix 字幕 / 三步翻译 / 模板兼容 / JobStore / 直播切窗与 playlist / 目录解析）
 ```
 
 ## 依赖（需自行准备）
@@ -99,7 +112,7 @@ make app
 ## 开发
 
 ```bash
-make build && make test   # 32 个单测
+make build && make test   # 44 个单测（含 130s 合成视频 3 窗口直播 E2E 冒烟）
 make verify               # 真机自检：转录→切分→翻译→TTS→调度→成片
 ```
 
