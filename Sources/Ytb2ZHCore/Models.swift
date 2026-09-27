@@ -11,6 +11,54 @@ public struct TerminologyTerm: Codable, Hashable, Sendable {
     }
 }
 
+// MARK: - 领域语境（术语提取步顺带产出，注入翻译 prompt，随 terminology.json 落盘可人工修订）
+
+public struct DomainContext: Codable, Hashable, Sendable {
+    /// 领域，如 "人工智能/网络安全"
+    public var domain: String
+    /// 语气基调，如 "轻松教学"
+    public var tone: String
+    /// 目标受众，如 "入门者"
+    public var audience: String
+
+    public init(domain: String = "", tone: String = "", audience: String = "") {
+        self.domain = domain; self.tone = tone; self.audience = audience
+    }
+
+    public var isEmpty: Bool { domain.isEmpty && tone.isEmpty && audience.isEmpty }
+}
+
+/// terminology.json 落盘格式：{"domain":{...},"terms":[...]}
+/// 兼容旧格式（纯术语数组，仅取 terms）；load(from:) 统一处理两种形态
+public struct TerminologyExtraction: Codable, Hashable, Sendable {
+    public var domain: DomainContext?
+    public var terms: [TerminologyTerm]
+
+    public init(domain: DomainContext? = nil, terms: [TerminologyTerm] = []) {
+        self.domain = domain; self.terms = terms
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        domain = try c.decodeIfPresent(DomainContext.self, forKey: .domain)
+        terms = try c.decodeIfPresent([TerminologyTerm].self, forKey: .terms) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey { case domain, terms }
+
+    /// 新旧格式兼容读取：先按对象解，失败再按旧术语数组解
+    public static func load(from url: URL) -> TerminologyExtraction? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        if let doc = try? JSONDecoder().decode(TerminologyExtraction.self, from: data) { return doc }
+        if let terms = try? JSONDecoder().decode([TerminologyTerm].self, from: data) {
+            return TerminologyExtraction(domain: nil, terms: terms)
+        }
+        return nil
+    }
+
+    public var hasContent: Bool { domain?.isEmpty == false || !terms.isEmpty }
+}
+
 // MARK: - 语音单元模型（贯穿全流水线）
 
 /// 词级时间戳（ASR 输出）

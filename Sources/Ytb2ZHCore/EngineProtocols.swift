@@ -33,11 +33,11 @@ public protocol SegmentationEngine: Sendable {
     func segment(words: [TimedWord], options: SegmentationOptions) -> [SpeechUnit]
 }
 
-/// 4. 术语提取（可选）：从英文单元抽取领域术语表，供翻译注入
+/// 4. 术语提取（可选）：从英文单元抽取领域语境 + 术语表，供翻译注入
 public protocol TerminologyEngine: Sendable {
     var descriptor: EngineDescriptor { get }
     func extractTerms(units: [SpeechUnit], options: TerminologyOptions,
-                      progress: @Sendable @escaping (Double, String?) -> Void) async throws -> [TerminologyTerm]
+                      progress: @Sendable @escaping (Double, String?) -> Void) async throws -> TerminologyExtraction
 }
 
 /// 5. 翻译：英文单元 → 中文单元

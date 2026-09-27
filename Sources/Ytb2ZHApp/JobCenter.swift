@@ -186,6 +186,7 @@ struct TerminologyEditorView: View {
     let jobID: String
     var onSaved: () -> Void
     @State private var terms: [TerminologyTerm] = []
+    @State private var domainCtx = DomainContext()
     @State private var newEN = ""
     @State private var newZH = ""
     @State private var message = ""
@@ -194,6 +195,18 @@ struct TerminologyEditorView: View {
     var body: some View {
         VStack(spacing: 0) {
             Text("术语表（\(terms.count) 条）").font(.headline).padding(12)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("领域（翻译时优先于「科技视频」人设）").font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        TextField("领域，如 人工智能/网络安全", text: $domainCtx.domain)
+                        TextField("语气基调", text: $domainCtx.tone)
+                        TextField("目标受众", text: $domainCtx.audience)
+                    }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
             List {
                 ForEach(terms.indices, id: \.self) { i in
                     HStack {
@@ -236,7 +249,9 @@ struct TerminologyEditorView: View {
                 Spacer()
                 Button("保存并从翻译步续跑") {
                     do {
-                        try store.writeJSON(terms, to: store.terminologyJSON(jobID))
+                        try store.writeJSON(
+                            TerminologyExtraction(domain: domainCtx.isEmpty ? nil : domainCtx, terms: terms),
+                            to: store.terminologyJSON(jobID))
                         onSaved()
                         dismiss()
                         NotificationCenter.default.post(
@@ -252,7 +267,10 @@ struct TerminologyEditorView: View {
         }
         .frame(minWidth: 640, minHeight: 440)
         .onAppear {
-            terms = store.readJSON(store.terminologyJSON(jobID), as: [TerminologyTerm].self) ?? []
+            if let doc = TerminologyExtraction.load(from: store.terminologyJSON(jobID)) {
+                terms = doc.terms
+                domainCtx = doc.domain ?? DomainContext()
+            }
         }
     }
 }

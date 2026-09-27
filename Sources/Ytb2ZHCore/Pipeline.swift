@@ -141,14 +141,14 @@ public final class Pipeline: Sendable {
             units = store.readJSON(store.unitsJSON(jobID), as: [SpeechUnit].self) ?? []
         }
 
-        // 4. 术语提取（可选；产物 terminology.json 可人工修订后重跑翻译）
+        // 4. 术语提取（可选；产物 terminology.json 含领域语境+术语，可人工修订后重跑翻译）
         var translateOptions = profile.translate
         if profile.translate.useTerminology {
             let termPath = store.terminologyJSON(jobID)
-            var terms: [TerminologyTerm]?
-            if let cached = store.readJSON(termPath, as: [TerminologyTerm].self), !cached.isEmpty,
+            var doc: TerminologyExtraction?
+            if let cached = TerminologyExtraction.load(from: termPath), cached.hasContent,
                !stepFilter.contains(.summarize) {
-                terms = cached
+                doc = cached
             } else if shouldRun(.summarize), let terminologist = engines.terminologist,
                       profile.engines[StepID.summarize.rawValue] != "none", !units.isEmpty {
                 emit(.stepStarted(.summarize)); store.setStep(jobID, .summarize, .running)
@@ -158,14 +158,16 @@ public final class Pipeline: Sendable {
                             self?.emit(.progress(.summarize, p, msg)) }
                     try store.writeJSON(extracted, to: termPath)
                     store.setStep(jobID, .summarize, .done)
-                    emit(.stepFinished(.summarize, ["terms": String(extracted.count)]))
-                    terms = extracted
+                    emit(.stepFinished(.summarize, ["terms": String(extracted.terms.count)]))
+                    doc = extracted
                 } catch {
                     store.setStep(jobID, .summarize, .failed)
                     emit(.log("术语提取失败，继续无术语翻译：\(error.localizedDescription)"))
                 }
             }
-            translateOptions.terminology = (terms ?? []).isEmpty ? nil : terms
+            let terms = doc?.terms ?? []
+            translateOptions.terminology = terms.isEmpty ? nil : terms
+            translateOptions.domain = doc?.domain
         }
 
         // 5. 翻译

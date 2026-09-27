@@ -336,6 +336,7 @@ final class TranslateCoreTests: XCTestCase {
         let units = [SpeechUnit(start: 0, end: 2, en: "hello"), SpeechUnit(start: 2, end: 4, en: "world")]
         var opts = TranslateOptions(batchSize: 10, concurrency: 1)
         opts.quality = .singlePass
+        opts.autoExpand = false
         let calls = Mutex(0)
         let out = try await TranslateCore.runTranslate(units: units, options: opts, progress: { _, _ in }) { system, user in
             calls.with { $0 += 1 }
@@ -352,6 +353,7 @@ final class TranslateCoreTests: XCTestCase {
         let units = [SpeechUnit(start: 0, end: 2, en: "hello")]
         var opts = TranslateOptions(batchSize: 10, concurrency: 1)
         opts.quality = .threePass
+        opts.autoExpand = false
         let calls = Mutex(0)
         let out = try await TranslateCore.runTranslate(units: units, options: opts, progress: { _, _ in }) { _, _ in
             let c = calls.with { v -> Int in v += 1; return v }
@@ -366,6 +368,7 @@ final class TranslateCoreTests: XCTestCase {
         let units = [SpeechUnit(start: 0, end: 2, en: "hello")]
         var opts = TranslateOptions(batchSize: 10, concurrency: 1)
         opts.terminology = [TerminologyTerm(en: "hello", zh: "哈喽")]
+        opts.autoExpand = false
         let captured = Mutex("")
         _ = try await TranslateCore.runTranslate(units: units, options: opts, progress: { _, _ in }) { system, _ in
             captured.with { $0 = system }
@@ -374,3 +377,127 @@ final class TranslateCoreTests: XCTestCase {
         XCTAssertTrue(captured.wrapped.contains("hello → 哈喽"))
     }
 }
+
+    /// 领域语境注入：捕获的 system prompt 里含领域/语气/受众；空语境不注入
+    func testDomainInjection() async throws {
+        let units = [SpeechUnit(start: 0, end: 2, en: "hello")]
+        var opts = TranslateOptions(batchSize: 10, concurrency: 1)
+        opts.domain = DomainContext(domain: "网络安全", tone: "轻松教学", audience: "入门者")
+        opts.autoExpand = false
+        let captured = Mutex("")
+        _ = try await TranslateCore.runTranslate(units: units, options: opts, progress: { _, _ in }) { system, _ in
+            captured.with { $0 = system }
+            return "[{\"i\":0,\"zh\":\"好\"}]"
+        }
+        XCTAssertTrue(captured.wrapped.contains("专业领域：网络安全"))
+        XCTAssertTrue(captured.wrapped.contains("语气基调：轻松教学"))
+        XCTAssertTrue(captured.wrapped.contains("目标受众：入门者"))
+
+        // 空语境不注入
+        XCTAssertTrue(TranslateCore.domainBlock(nil, style: .narrator).isEmpty)
+        XCTAssertTrue(TranslateCore.domainBlock(DomainContext(domain: "", tone: "", audience: ""), style: .narrator).isEmpty)
+        // 仅领域也成立
+        XCTAssertTrue(TranslateCore.domainBlock(DomainContext(domain: "法律科普"), style: .narrator).contains("法律科普"))
+    }
+
+    /// 风格过滤：faithful/concise 只注入领域行，不注入语气/受众（防扩写指令与风格定义打架）
+    func testDomainBlockStyleFilter() throws {
+        let d = DomainContext(domain: "法律科普", tone: "激动解说", audience: "入门者")
+        for style in [TranslationStyle.faithful, .concise] {
+            let block = TranslateCore.domainBlock(d, style: style)
+            XCTAssertTrue(block.contains("专业领域：法律科普"), "\(style) 应保留领域行")
+            XCTAssertFalse(block.contains("语气基调"), "\(style) 不应注入语气")
+            XCTAssertFalse(block.contains("目标受众"), "\(style) 不应注入受众")
+        }
+        let narrator = TranslateCore.domainBlock(d, style: .narrator)
+        XCTAssertTrue(narrator.contains("语气基调：激动解说"))
+        XCTAssertTrue(narrator.contains("目标受众：入门者"))
+    }
+
+    /// 提取引擎：新回复格式（对象，领域+术语）解析与去重
+    func testTerminologyEngineParsing() throws {
+        let obj = try GatewayTerminologyEngine.extractJSONObject("""
+        ```json
+        {"domain":"人工智能","tone":"轻松教学","audience":"入门者","terms":[
+            {"en":"LLM","zh":"大语言模型","note":""},
+            {"en":"llm","zh":"重复项","note":""},
+            {"en":"","zh":"空 en 跳过"}
+        ]}
+        ```
+        """)
+        XCTAssertEqual(obj["domain"] as? String, "人工智能")
+        let terms = GatewayTerminologyEngine.parseTerms(obj["terms"] as? [[String: Any]] ?? [])
+        XCTAssertEqual(terms.count, 1)
+        XCTAssertEqual(terms[0].zh, "大语言模型")
+        XCTAssertThrowsError(try GatewayTerminologyEngine.extractJSONObject("不是 JSON"))
+    }
+
+    // MARK: 时长节奏（双向字数预算 + 超短句扩写）
+
+    /// 超短句判定阈值：< 时长×3 字且时长≥2s
+    func testIsTooShortThreshold() {
+        XCTAssertTrue(TranslateCore.isTooShort(zh: "哈喽", duration: 2.0))              // 2字 < 6字
+        XCTAssertFalse(TranslateCore.isTooShort(zh: "哈喽大家好呀", duration: 2.0))     // 6字 ≥ 6字
+        XCTAssertFalse(TranslateCore.isTooShort(zh: "哦", duration: 1.9))              // 时长过短不判
+        XCTAssertFalse(TranslateCore.isTooShort(zh: "今天我们聊一个很有意思的话题", duration: 4.0))  // 16字 ≥ 12字
+    }
+
+    /// 双向字数预算：开启时 prompt 带建议字数（时长×4）与节奏规则；关闭时回退旧单向上限提示
+    func testPacingPromptOnOff() async throws {
+        let units = [SpeechUnit(start: 0, end: 4, en: "hello world foo bar")]
+        var opts = TranslateOptions(batchSize: 10, concurrency: 1)
+        let captured = Mutex("")
+        let longZh = "[{\"i\":0,\"zh\":\"大家好呀今天咱们聊一个挺有意思的话题看看吧\"}]"
+
+        opts.autoExpand = true
+        _ = try await TranslateCore.runTranslate(units: units, options: opts, progress: { _, _ in }) { system, user in
+            captured.with { $0 = "S:\(system)\n====\nU:\(user)" }
+            return longZh
+        }
+        XCTAssertTrue(captured.wrapped.contains("≈16字"))
+        XCTAssertTrue(captured.wrapped.contains("90%～110%"))
+        XCTAssertTrue(captured.wrapped.contains("时长节奏"))
+
+        opts.autoExpand = false
+        _ = try await TranslateCore.runTranslate(units: units, options: opts, progress: { _, _ in }) { system, user in
+            captured.with { $0 = "S:\(system)\n====\nU:\(user)" }
+            return longZh
+        }
+        XCTAssertTrue(captured.wrapped.contains("不宜超过"))
+        XCTAssertFalse(captured.wrapped.contains("时长节奏"))
+        XCTAssertFalse(captured.wrapped.contains("≈16字"))
+    }
+
+    /// 超短句定向扩写：译文远短于时间窗时发第二次请求，采纳更长结果
+    func testShortSentenceExpansion() async throws {
+        let units = [SpeechUnit(start: 0, end: 6, en: "hello everyone welcome back to the channel")]
+        var opts = TranslateOptions(batchSize: 10, concurrency: 1)
+        let calls = Mutex(0)
+        let expanded = "哈喽各位朋友，欢迎回到咱们的频道，今天咱们接着往下聊"
+        let out = try await TranslateCore.runTranslate(units: units, options: opts, progress: { _, _ in }) { system, user in
+            let c = calls.with { v -> Int in v += 1; return v }
+            if c == 1 {
+                return "[{\"i\":0,\"zh\":\"大家好\"}]"   // 3字 < 6s×3=18字 → 超短
+            }
+            XCTAssertTrue(system.contains("润色师"))
+            XCTAssertTrue(user.contains("目标约24字"))
+            return "[{\"i\":0,\"zh\":\"\(expanded)\"}]"
+        }
+        XCTAssertEqual(calls.wrapped, 2)
+        XCTAssertEqual(out[0].zh, expanded)
+    }
+
+    /// 译文足够长时不应触发扩写额外调用
+    func testNoExpansionWhenLongEnough() async throws {
+        let units = [SpeechUnit(start: 0, end: 2, en: "hello")]
+        var opts = TranslateOptions(batchSize: 10, concurrency: 1)
+        let calls = Mutex(0)
+        let out = try await TranslateCore.runTranslate(units: units, options: opts, progress: { _, _ in }) { _, _ in
+            calls.with { $0 += 1 }
+            return "[{\"i\":0,\"zh\":\"哈喽大家好呀今天天气不错\"}]"  // 12字 ≥ 2s×3=6字
+        }
+        XCTAssertEqual(calls.wrapped, 1)
+        XCTAssertEqual(out[0].zh, "哈喽大家好呀今天天气不错")
+    }
+}
+

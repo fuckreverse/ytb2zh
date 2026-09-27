@@ -93,12 +93,57 @@ final class CoreTests: XCTestCase {
     func testTerminologyRoundTripNotPersisted() throws {
         var p = Profile.balanced
         p.translate.terminology = [TerminologyTerm(en: "LLM", zh: "大语言模型")]
+        p.translate.domain = DomainContext(domain: "人工智能", tone: "轻松教学", audience: "入门者")
         let data = try JSONEncoder().encode(p)
         let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let translate = obj?["translate"] as? [String: Any]
         XCTAssertNil(translate?["terminology"], "运行时术语不得写入模板 JSON")
+        XCTAssertNil(translate?["domain"], "运行时领域语境不得写入模板 JSON")
         let back = try JSONDecoder().decode(Profile.self, from: data)
         XCTAssertNil(back.translate.terminology)
+        XCTAssertNil(back.translate.domain)
+    }
+
+    /// terminology.json 新格式（对象）与旧格式（纯数组）兼容读写
+    func testTerminologyExtractionLegacyAndNewFormat() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // 旧格式：纯术语数组（老任务产物）
+        let legacy = dir.appendingPathComponent("legacy.json")
+        let legacyData = try JSONEncoder().encode([
+            TerminologyTerm(en: "LLM", zh: "大语言模型"),
+        ])
+        try legacyData.write(to: legacy)
+        let fromLegacy = try XCTUnwrap(TerminologyExtraction.load(from: legacy))
+        XCTAssertEqual(fromLegacy.terms.count, 1)
+        XCTAssertNil(fromLegacy.domain)
+
+        // 新格式：{domain, terms}，往返一致
+        let doc = TerminologyExtraction(
+            domain: DomainContext(domain: "网络安全", tone: "严肃专业", audience: "从业者"),
+            terms: [TerminologyTerm(en: "RAT", zh: "远程访问木马")])
+        let newFile = dir.appendingPathComponent("new.json")
+        try JSONEncoder().encode(doc).write(to: newFile)
+        let back = try XCTUnwrap(TerminologyExtraction.load(from: newFile))
+        XCTAssertEqual(back.domain?.domain, "网络安全")
+        XCTAssertEqual(back.domain?.tone, "严肃专业")
+        XCTAssertEqual(back.domain?.audience, "从业者")
+        XCTAssertEqual(back.terms.first?.en, "RAT")
+
+        // 新格式字段缺失也可解（domain/term 全空）
+        let empty = try JSONSerialization.data(withJSONObject: ["terms": []] as [String: Any])
+        let emptyFile = dir.appendingPathComponent("empty.json")
+        try empty.write(to: emptyFile)
+        let fromEmpty = try XCTUnwrap(TerminologyExtraction.load(from: emptyFile))
+        XCTAssertTrue(fromEmpty.terms.isEmpty)
+        XCTAssertFalse(fromEmpty.hasContent)
+        XCTAssertTrue(doc.hasContent)
+        // 仅领域无术语：同样算有内容（缓存有效，不会重复提取）
+        XCTAssertTrue(TerminologyExtraction(
+            domain: DomainContext(domain: "中医养生"), terms: []).hasContent)
     }
 
     func testEngineRegistryValidation() {

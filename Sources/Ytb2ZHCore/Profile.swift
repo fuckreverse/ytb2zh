@@ -111,6 +111,8 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
     public var compatModel: String
     /// 运行时由 Pipeline 从 terminology.json 注入，不写入模板 JSON
     public var terminology: [TerminologyTerm]?
+    /// 运行时由 Pipeline 从 terminology.json 注入的领域语境，不写入模板 JSON
+    public var domain: DomainContext?
 
     public init(endpoint: String = "http://127.0.0.1:15000/v1/responses",
                 model: String = "friday-personal/deepseek-v4-flash",
@@ -120,13 +122,14 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
                 targetLanguage: String = "zh",
                 compatBaseURL: String = "https://api.openai.com/v1",
                 compatAPIKey: String = "", compatModel: String = "gpt-4o-mini",
-                terminology: [TerminologyTerm]? = nil) {
+                terminology: [TerminologyTerm]? = nil, domain: DomainContext? = nil) {
         self.endpoint = endpoint; self.model = model; self.batchSize = batchSize
         self.concurrency = concurrency; self.style = style; self.autoExpand = autoExpand
         self.useTerminology = useTerminology; self.quality = quality
         self.targetLanguage = targetLanguage
         self.compatBaseURL = compatBaseURL; self.compatAPIKey = compatAPIKey; self.compatModel = compatModel
         self.terminology = terminology
+        self.domain = domain
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -151,6 +154,7 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
         compatAPIKey = try c.decodeIfPresent(String.self, forKey: .compatAPIKey) ?? d.compatAPIKey
         compatModel = try c.decodeIfPresent(String.self, forKey: .compatModel) ?? d.compatModel
         terminology = nil
+        domain = nil
     }
 
     /// terminology 是运行时字段，永不落盘
