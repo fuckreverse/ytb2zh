@@ -1,0 +1,27 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3B5BDB"/>
+      <stop offset="0.55" stop-color="#4C34C9"/>
+      <stop offset="1" stop-color="#1B2A8F"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.18"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- macOS 大圆角底板 -->
+  <rect x="128" y="128" width="768" height="768" rx="180" fill="url(#bg)"/>
+  <rect x="128" y="128" width="768" height="384" rx="180" fill="url(#gloss)"/>
+
+  <!-- 播放三角（白色，微圆角） -->
+  <path d="M 430 366
+           L 664 500
+           L 430 634 Z"
+        fill="#FFFFFF" stroke="#FFFFFF" stroke-width="36" stroke-linejoin="round"/>
+
+  <!-- 字幕条：一条长、一条短，象征双语字幕 -->
+  <rect x="300" y="712" width="424" height="52" rx="26" fill="#FFFFFF" opacity="0.95"/>
+  <rect x="300" y="792" width="264" height="44" rx="22" fill="#FFFFFF" opacity="0.55"/>
+</svg>
