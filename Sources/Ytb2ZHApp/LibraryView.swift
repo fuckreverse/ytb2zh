@@ -176,7 +176,7 @@ struct LibraryView: View {
         }
         .onAppear { model.reload() }
         .sheet(item: $playing) { item in
-            ReplayPlayerSheet(profile: playProfile(item), url: item.url) {
+            ReplayPlayerSheet(profile: playProfile(item), url: item.url, title: item.title) {
                 model.reload()
                 onPlayed?()
             }
@@ -230,13 +230,16 @@ struct LibraryView: View {
     private struct ReplayPlayerSheet: View {
         let profile: Profile
         let url: String
+        let title: String
         let onDismiss: () -> Void
         @StateObject private var session = LiveSession()
 
         var body: some View {
-            LivePlayerView(profile: profile, autoStartURL: url, session: session)
-                .frame(minWidth: 860, minHeight: 640)
-                .onDisappear(perform: onDismiss)
+            PlayerSheetChrome(title: title.isEmpty ? L10n.tr("实时播放") : title) {
+                LivePlayerView(profile: profile, autoStartURL: url, session: session)
+                    .frame(minWidth: 860, minHeight: 640)
+            }
+            .onDisappear(perform: onDismiss)
         }
     }
 
@@ -657,14 +660,46 @@ struct SubscriptionsView: View {
                               onPlay: {
                                   detailVideo = nil
                                   playTarget = v
+                              },
+                              onOriginal: {
+                                  detailVideo = nil
+                                  origTarget = v
                               })
         }
         .sheet(item: $playTarget) { v in
-            SubReplaySheet(profile: profile, url: v.url) {
+            SubReplaySheet(profile: profile, url: v.url, title: v.title) {
                 onChanged()
             }
         }
+        .sheet(item: $origTarget) { v in
+            OriginalPlayerView(url: v.url,
+                               proxy: AppSettings.effectiveProxy(fallback: profile.download.proxy))
+        }
         .sheet(isPresented: $showAdd) { addSheet }
+        .sheet(item: $renameTarget) { sub in
+            renameSheet(sub)
+        }
+    }
+
+    private func renameSheet(_ sub: SubscriptionStore.Subscription) -> some View {
+        VStack(spacing: 14) {
+            Text("重命名订阅").font(.headline)
+            TextField("名称", text: $renameText)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Button("取消") { renameTarget = nil }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("保存") {
+                    store.rename(id: sub.id, name: renameText)
+                    renameTarget = nil
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(renameText.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
     }
 
     // MARK: 头部
@@ -1147,12 +1182,46 @@ private struct VideoConvertSheet: View {
 private struct SubReplaySheet: View {
     let profile: Profile
     let url: String
+    let title: String
     let onDismiss: () -> Void
     @StateObject private var session = LiveSession()
 
     var body: some View {
-        LivePlayerView(profile: profile, autoStartURL: url, session: session)
-            .frame(minWidth: 960, minHeight: 700)
-            .onDisappear(perform: onDismiss)
+        PlayerSheetChrome(title: title.isEmpty ? L10n.tr("实时播放") : title) {
+            LivePlayerView(profile: profile, autoStartURL: url, session: session)
+                .frame(minWidth: 960, minHeight: 700)
+        }
+        .onDisappear(perform: onDismiss)
+    }
+}
+
+// MARK: - 弹窗外壳：标题栏 + 关闭按钮（Esc 保留），包住无窗饰的播放器视图
+// 背景：播放器 sheet 没有 macOS 原生标题栏可见的关闭钮，之前只能靠 Esc 关闭。
+// 关闭按钮绑 keyboardShortcut(.cancelAction)，与 Esc 行为一致；
+// dismiss 走 @Environment(\.dismiss)（sheet(item:) 会把绑定置 nil，触发回收逻辑）。
+
+struct PlayerSheetChrome<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: () -> Content
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Text(title).font(.headline).lineLimit(1).truncationMode(.middle)
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Label("关闭", systemImage: "xmark.circle.fill")
+                }
+                .keyboardShortcut(.cancelAction)
+                .help("关闭（Esc）")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            Divider()
+            content()
+        }
     }
 }
