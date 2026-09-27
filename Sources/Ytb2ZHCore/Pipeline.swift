@@ -45,17 +45,24 @@ public final class Pipeline: Sendable {
 
     /// 执行任务；已 done 且产物齐全的步骤自动跳过（断点续跑）。
     /// stepFilter 非空时只执行指定步骤（增量重跑，如只重排调度）。
+    /// trialSeconds 非空 = 试转模式：只处理前 N 秒（下载段截断 + ffmpeg 截取），
+    /// 用于低成本验证配置；试转产物写入独立任务目录，不影响全量转换。
     public func run(videoURL providedVideo: URL?,
                     url: String, profile: Profile, jobID: String,
-                    stepFilter: Set<StepID> = []) async throws -> URL {
+                    stepFilter: Set<StepID> = [], trialSeconds: Int? = nil) async throws -> URL {
         let ctx = PipelineContext(jobDir: store.jobDir(id: jobID), profile: profile)
-        var video = providedVideo ?? store.source(jobID)
+        // 已有原片复用（source.mp4 优先，否则 webm/mkv 等实际产物），避免续跑时引用不存在的 source.mp4
+        var video = providedVideo ?? (store.existingSource(jobID) ?? store.source(jobID))
+
+        if let secs = trialSeconds, secs > 0 {
+            emit(.log("—— 试转模式：只处理前 \(secs) 秒 ——"))
+        }
 
         func shouldRun(_ s: StepID) -> Bool {
             stepFilter.isEmpty || stepFilter.contains(s)
         }
 
-        // 1. 下载
+        // 1. 下载（试转时把 partialSeconds 透传给下载引擎，yt-dlp 可只下前段）
         if shouldRun(.download) {
             if let providedVideo {
                 try? FileManager.default.copyItem(at: providedVideo, to: store.source(jobID))
@@ -63,8 +70,10 @@ public final class Pipeline: Sendable {
                 emit(.stepStarted(.download))
                 store.setStep(jobID, .download, .running)
                 do {
+                    var dlOpts = profile.download
+                    if let secs = trialSeconds, secs > 0 { dlOpts.partialSeconds = secs }
                     video = try await engines.downloader.download(
-                        url: url, to: store.source(jobID), options: profile.download) { [weak self] p, msg in
+                        url: url, to: store.source(jobID), options: dlOpts) { [weak self] p, msg in
                             self?.emit(.progress(.download, p, msg)) }
                     store.setStep(jobID, .download, .done)
                     emit(.stepFinished(.download, ["video": video.path]))
@@ -72,6 +81,31 @@ public final class Pipeline: Sendable {
                     store.setStep(jobID, .download, .failed)
                     emit(.failed(.download, error.localizedDescription)); throw error
                 }
+            }
+        }
+
+        // 1.5 试转截取：统一 ffmpeg 截前 N 秒（覆盖本地导入 / 下载段略超长等情况），
+        // 下游九步全部基于 trial_source.mp4 跑。已存在则复用（断点续跑友好）。
+        if let secs = trialSeconds, secs > 0 {
+            let trimmed = store.trialSource(jobID)
+            let duration = ffprobeDuration(video)
+            let needsTrim = (duration ?? .infinity) > Double(secs) + 2.0
+            if FileManager.default.fileExists(atPath: trimmed.path) {
+                video = trimmed
+                emit(.log("复用试转截取片：\(trimmed.lastPathComponent)"))
+            } else if needsTrim {
+                emit(.stepStarted(.download)); store.setStep(jobID, .download, .running)
+                emit(.progress(.download, 0.9, "截取前 \(secs) 秒…"))
+                do {
+                    try TrialTrim.trim(source: video, to: trimmed, seconds: secs)
+                    video = trimmed
+                    emit(.stepFinished(.download, ["trial": trimmed.path]))
+                } catch {
+                    store.setStep(jobID, .download, .failed)
+                    emit(.failed(.download, error.localizedDescription)); throw error
+                }
+            } else {
+                emit(.log("源片时长 ≤ 试转时长，无需截取"))
             }
         }
 
@@ -269,7 +303,7 @@ public final class Pipeline: Sendable {
                 let source = units
                 let planCopy = plan
                 let out = try await engines.composer.compose(
-                    video: store.source(jobID),
+                    video: video,
                     placements: planCopy.placements,
                     unitSchedules: planCopy.unitSchedules,
                     units: source, cacheDir: cacheDir,
@@ -396,4 +430,47 @@ public func ffprobeDuration(_ url: URL) -> Double? {
           let s = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8),
           let d = Double(s.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
     return d
+}
+
+/// Core 层轻量错误（ Engines 层的 EngineError 不可引用）
+public struct PipelineError: LocalizedError {
+    public let message: String
+    public init(message: String) { self.message = message }
+    public var errorDescription: String? { message }
+
+    public static func message(_ m: String) -> PipelineError { PipelineError(message: m) }
+}
+
+/// 试转截取：把源片截成前 N 秒。优先流复制（快、无损），失败回退超快重编码。
+/// 独立抛错（供调用方上报），不静默降级——试转的意义就是暴露配置问题。
+public enum TrialTrim {
+    public static func trim(source: URL, to dest: URL, seconds: Int) throws {
+        let fm = FileManager.default
+        try? fm.removeItem(at: dest)
+        // 先试流复制：快且无转码损耗；部分容器 copy 会失败或时长异常，回退重编码
+        if run(["-y", "-i", source.path, "-t", String(seconds),
+                "-c", "copy", "-movflags", "+faststart", dest.path]),
+           let d = ffprobeDuration(dest), d > 1 {
+            return
+        }
+        try? fm.removeItem(at: dest)
+        guard run(["-y", "-i", source.path, "-t", String(seconds),
+                   "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26",
+                   "-c:a", "aac", "-movflags", "+faststart", dest.path]),
+              let d = ffprobeDuration(dest), d > 1 else {
+            throw PipelineError.message(
+                "试转截取失败（ffmpeg）：\(source.lastPathComponent) → 前 \(seconds) 秒")
+        }
+    }
+
+    @discardableResult
+    private static func run(_ args: [String]) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = ["ffmpeg", "-hide_banner", "-loglevel", "error"] + args
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run(); p.waitUntilExit() } catch { return false }
+        return p.terminationStatus == 0
+    }
 }

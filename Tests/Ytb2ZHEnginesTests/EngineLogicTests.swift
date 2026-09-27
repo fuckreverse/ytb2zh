@@ -582,3 +582,43 @@ final class LocalTTSEngineTests: XCTestCase {
 }
 
 
+// MARK: 下载复用：dest 缺失但同前缀产物已存在时秒回，不触发真实下载
+
+final class DownloadReuseTests: XCTestCase {
+    func testDownloadReusesSiblingSourceFile() async throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("ytb2zh-dlreuse-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        // 模拟上一次下载落到 source.webm（>1MB 完整产物）
+        let webm = dir.appendingPathComponent("source.webm")
+        try Data(count: 2_000_000).write(to: webm)
+
+        let engine = YtDlpDownloadEngine()
+        // 无效 URL + 无代理：若引擎真的发起下载必然失败；测试通过即证明提前复用返回
+        let file = try await engine.download(
+            url: "https://www.youtube.com/watch?v=nonexistent000",
+            to: dir.appendingPathComponent("source.mp4"),
+            options: DownloadOptions(proxy: "")) { _, _ in }
+        XCTAssertEqual(file.standardizedFileURL.path, webm.standardizedFileURL.path)
+    }
+
+    func testDownloadDoesNotReuseTinyPartialFile() async throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("ytb2zh-dlreuse-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        // <1MB 视为不完整产物，不应复用（会走真实下载并因连接拒绝立即失败）
+        let tiny = dir.appendingPathComponent("source.webm")
+        try Data(count: 100).write(to: tiny)
+
+        let engine = YtDlpDownloadEngine()
+        do {
+            _ = try await engine.download(
+                url: "http://127.0.0.1:1/video",
+                to: dir.appendingPathComponent("source.mp4"),
+                options: DownloadOptions(proxy: "")) { _, _ in }
+            XCTFail("不应复用不完整产物")
+        } catch { }
+    }
+}

@@ -17,6 +17,15 @@ public final class YtDlpDownloadEngine: DownloadEngine, @unchecked Sendable {
         try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
         // 断点续跑：目标已是完整文件则跳过
         if let size = fileSize(dest.path), size > 1_000_000 { return dest }
+        // yt-dlp 可能落到其它扩展名（source.webm/mkv…）：dest 缺失但同前缀产物已存在也直接复用，
+        // 避免管线二次调用时对同一视频完整重下
+        if dest.pathExtension.lowercased() != "json" {
+            let base = dest.deletingPathExtension().lastPathComponent
+            let siblings = ((try? fm.contentsOfDirectory(at: dest.deletingLastPathComponent(),
+                                                        includingPropertiesForKeys: nil)) ?? [])
+                .filter { $0.lastPathComponent.hasPrefix("\(base).") && $0.pathExtension != "json" }
+            if let any = siblings.first(where: { (fileSize($0.path) ?? 0) > 1_000_000 }) { return any }
+        }
 
         let outTpl = dest.deletingLastPathComponent()
             .appendingPathComponent("source.%(ext)s").path
@@ -24,6 +33,11 @@ public final class YtDlpDownloadEngine: DownloadEngine, @unchecked Sendable {
         if !options.proxy.isEmpty { args += ["--proxy", options.proxy] }
         args += ["--no-playlist", "--no-part", "-f", options.format,
                  "-o", outTpl, "--newline", url]
+        // 试转模式：只下载前 N 秒（download-sections 需 ffmpeg 切段合并，管线本就依赖 ffmpeg；
+        // 关键帧处切段即可，时长略超无妨——Pipeline 会再统一精确截取）
+        if let secs = options.partialSeconds, secs > 0 {
+            args += ["--download-sections", String(format: "*0-%d", secs)]
+        }
 
         let ytdlp = SidecarPaths.ytDlp
         let stderrTail = Mutex([String]())

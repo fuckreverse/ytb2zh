@@ -159,4 +159,79 @@ final class CoreTests: XCTestCase {
         // 其它步骤 id 不在注册表 → 仍有错误
         XCTAssertFalse(reg.validate(profile: p).isEmpty)
     }
+
+    // MARK: 试转模式（前 N 分钟验证配置）
+
+    func testDownloadOptionsPartialSecondsNotPersisted() throws {
+        var p = Profile.balanced
+        p.download.partialSeconds = 180
+        // 运行时字段不落盘
+        let enc = try JSONEncoder().encode(p)
+        let json = String(decoding: enc, as: UTF8.self)
+        XCTAssertFalse(json.contains("partialSeconds"))
+        // 旧模板 JSON（无 partialSeconds）仍可解码，默认 nil
+        let legacy = try JSONSerialization.data(withJSONObject: [
+            "format": "f", "proxy": "", "keepSource": true,
+        ] as [String: Any])
+        let dlOpts = try JSONDecoder().decode(DownloadOptions.self, from: legacy)
+        XCTAssertNil(dlOpts.partialSeconds)
+        XCTAssertEqual(dlOpts.format, "f")
+        // 不带 download 字段的旧 Profile 兼容不变
+        var pp = Profile.balanced
+        pp.download.partialSeconds = nil
+        XCTAssertEqual(pp.download.partialSeconds, nil)
+    }
+
+    func testTrialStatusMarkerAndLegacyCompat() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ytb2zh-test-\(UUID().uuidString)", isDirectory: true)
+        let store = JobStore(root: dir)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // 旧 status.json（无 trial 键）解码不失败、isTrial = false
+        let legacyID = try store.newJob(url: "https://example.com/old", profile: .balanced)
+        let st = store.loadStatus(legacyID)
+        XCTAssertEqual(st.trial, nil)
+        XCTAssertFalse(st.isTrial)
+
+        // 试转任务标记得持久化
+        let trialID = try store.newJob(url: "https://example.com/v", profile: .balanced, trial: true)
+        XCTAssertTrue(store.loadStatus(trialID).isTrial)
+        // 普通任务不受影响
+        let normalID = try store.newJob(url: "https://example.com/v", profile: .balanced)
+        XCTAssertFalse(store.loadStatus(normalID).isTrial)
+
+        // trial_source.mp4 路径约定在任务目录内
+        XCTAssertTrue(store.trialSource(trialID).lastPathComponent == "trial_source.mp4")
+        XCTAssertTrue(store.trialSource(trialID).path.hasPrefix(store.jobDir(id: trialID).path))
+    }
+
+    func testTrialTrimTrimsToSeconds() throws {
+        // 合成 10s 视频，截取前 3s；ffmpeg 不可用则跳过（CI 环境保护）
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ytb2zh-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let src = dir.appendingPathComponent("in.mp4")
+        let gen = Process()
+        gen.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        gen.arguments = ["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+                         "-i", "testsrc2=size=320x240:rate=15:duration=10",
+                         "-f", "lavfi", "-i", "sine=frequency=440:duration=10",
+                         "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", src.path]
+        gen.standardError = FileHandle.nullDevice
+        try gen.run(); gen.waitUntilExit()
+        try XCTSkipUnless(gen.terminationStatus == 0, "ffmpeg 不可用，跳过试转截取测试")
+
+        let dest = dir.appendingPathComponent("trial_source.mp4")
+        try TrialTrim.trim(source: src, to: dest, seconds: 3)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dest.path))
+        let d = try XCTUnwrap(ffprobeDuration(dest))
+        XCTAssertEqual(d, 3, accuracy: 1.5)
+
+        // 幂等重跑：目标已存在也重新生成成功
+        try TrialTrim.trim(source: src, to: dest, seconds: 5)
+        let d2 = try XCTUnwrap(ffprobeDuration(dest))
+        XCTAssertEqual(d2, 5, accuracy: 1.5)
+    }
 }

@@ -7,9 +7,23 @@ public struct DownloadOptions: Codable, Hashable, Sendable {
     public var format: String     // yt-dlp -f 表达式
     public var proxy: String      // 空 = 不走代理
     public var keepSource: Bool
-    public init(format: String = "bv*[height<=720]+ba/b[height<=720]",
+    /// 运行时注入（试转模式）：只下载/截取前 N 秒，不写入模板 JSON
+    public var partialSeconds: Int?
+
+    /// 优先 avc1/m4a（AVPlayer 原生可播，原声即播模式必需）；找不到再回退任意格式
+    public init(format: String = "bv*[vcodec^=avc1][height<=720]+ba[ext=m4a]/b[ext=mp4][height<=720]/bv*[height<=720]+ba/b[height<=720]",
                 proxy: String = "http://127.0.0.1:7890", keepSource: Bool = true) {
         self.format = format; self.proxy = proxy; self.keepSource = keepSource
+        self.partialSeconds = nil
+    }
+
+    private enum CodingKeys: String, CodingKey { case format, proxy, keepSource }
+    /// partialSeconds 是运行时字段，永不落盘
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(format, forKey: .format)
+        try c.encode(proxy, forKey: .proxy)
+        try c.encode(keepSource, forKey: .keepSource)
     }
 }
 

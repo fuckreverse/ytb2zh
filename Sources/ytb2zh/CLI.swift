@@ -35,7 +35,7 @@ struct Ytb2ZHCLI {
 
         用法:
           ytb2zh run <url|本地路径> [--profile <name>] [--job-dir <dir>] [--from <step>] [--steps <s1,s2>]
-                        [--srt <file.srt>] [--resume <jobID>] [--set key=value ...]
+                        [--srt <file.srt>] [--resume <jobID>] [--trial-seconds <N>] [--set key=value ...]
           ytb2zh batch <tasks.json>   批量任务（重跑时跳过 done、重试 failed）
           ytb2zh templates list [--json]
           ytb2zh templates save <name> [--base <name>] [--set key=value ...]
@@ -49,6 +49,9 @@ struct Ytb2ZHCLI {
           {"event":"progress","step":"download","pct":0.42,"msg":"..."}
           {"event":"stepFinished","step":"translate","info":{...}}
           {"event":"failed","step":"synthesize","error":"..."}
+
+        --trial-seconds N：试转模式，新任务只处理前 N 秒（下载段截断 + ffmpeg 截取），
+                          用于低成本验证配置；确认后再跑全片。
 
         --set 可调项（key=dotted.path:value，JSON 值类型自动解析）:
           schedule.driftCap=1.2  schedule.pauseMax=1.0  compose.subtitleFontSize=18
@@ -68,6 +71,7 @@ struct Ytb2ZHCLI {
         var jobDir: String?
         var srt: String?
         var resumeJobID: String?
+        var trialSeconds: Int?
         var overrides: [(String, String)] = []
     }
 
@@ -86,6 +90,8 @@ struct Ytb2ZHCLI {
                 i += 1; o.srt = args[i]
             case "--resume":
                 i += 1; o.resumeJobID = args[i]
+            case "--trial-seconds":
+                i += 1; o.trialSeconds = Int(args[i])
             case "--set":
                 i += 1
                 let kv = args[i].split(separator: "=", maxSplits: 1)
@@ -118,7 +124,7 @@ struct Ytb2ZHCLI {
         if let resume = o.resumeJobID {
             jobID = resume
         } else {
-            jobID = try store.newJob(url: o.url, profile: profile)
+            jobID = try store.newJob(url: o.url, profile: profile, trial: o.trialSeconds != nil)
         }
 
         let (stream, cont) = AsyncStream<PipelineEvent>.makeStream()
@@ -136,7 +142,8 @@ struct Ytb2ZHCLI {
             stepFilter = Set(order.filter { order.firstIndex(of: $0)! >= order.firstIndex(of: f)! })
         }
         _ = try await pipeline.run(videoURL: nil, url: o.url, profile: profile,
-                                   jobID: jobID, stepFilter: stepFilter)
+                                   jobID: jobID, stepFilter: stepFilter,
+                                   trialSeconds: o.trialSeconds)
         cont.finish()
         await printer.value
     }
