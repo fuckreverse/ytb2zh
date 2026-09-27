@@ -487,6 +487,7 @@ final class SubscriptionRunner: ObservableObject {
 
     func append(_ line: String) {
         logLines.append(line)
+        AppLog.info("subscriptions", line)
     }
 
     /// 转换指定视频列表（单个或勾选批量）：同 URL+profile 已有成品跳过，

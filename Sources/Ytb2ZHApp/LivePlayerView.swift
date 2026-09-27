@@ -750,6 +750,7 @@ final class LiveSession: ObservableObject {
         if isRunning {
             isRunning = false
             phaseTitle = wasConverting && mode == .original ? "原声播放" : "已停止"
+            AppLog.info("player", "已停止播放/转换")
         }
         // 中文模式下播放器对齐旧行为：暂停；原声模式静默保留播放
         if mode == .chinese { player?.pause() }
@@ -891,6 +892,7 @@ final class LiveSession: ObservableObject {
             }
         case .failed(let m):
             errorText = m
+            AppLog.error("player", m)
             isRunning = false
             converting = false
             downloadingOriginal = false

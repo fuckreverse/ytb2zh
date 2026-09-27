@@ -37,6 +37,7 @@ final class PipelineJob: ObservableObject {
             }
         } catch {
             self.error = error.localizedDescription
+            AppLog.error("pipeline", "任务创建失败：\(error.localizedDescription)")
             running = false
             return
         }
@@ -46,6 +47,7 @@ final class PipelineJob: ObservableObject {
         do { engineSet = try EngineAssembly.engineSet(for: AppSettings.applied(profile)) }
         catch {
             self.error = error.localizedDescription
+            AppLog.error("pipeline", "引擎装配失败：\(error.localizedDescription)")
             running = false
             return
         }
@@ -69,8 +71,10 @@ final class PipelineJob: ObservableObject {
         }
     }
 
-    /// 日志同步落盘 jobDir/log.txt（跨续跑追加，供任务详情页查看）
+    /// 日志同步落盘 jobDir/log.txt（跨续跑追加，供任务详情页查看），
+    /// 并镜像进全局 AppLog（应用日志面板看全局时间线）
     private func appendLog(_ line: String) {
+        AppLog.info("pipeline", line)
         guard let id = jobID else { return }
         let url = JobStore().jobDir(id: id).appendingPathComponent("log.txt")
         let data = Data((line + "\n").utf8)

@@ -52,9 +52,40 @@ private struct NetworkTab: View {
     @AppStorage(AppSettings.proxyForEdgeTTSKey) private var forEdgeTTS = true
     // 存储位置
     @State private var jobRootPath = JobStore().root.path
+    // 界面语言（AppleLanguages 覆盖 + 重启生效）
+    @State private var langSelection: String = L10n.currentLanguage
+    @State private var langNeedsRestart = false
+    @State private var showLog = false
 
     var body: some View {
         Form {
+            Section("通用") {
+                LabeledContent("界面语言") {
+                    Picker("", selection: $langSelection) {
+                        Text("跟随系统").tag("system")
+                        Text("简体中文").tag("zh-Hans")
+                        Text("English").tag("en")
+                    }
+                    .labelsHidden()
+                    .frame(width: 200)
+                    .onChange(of: langSelection) { _, newValue in
+                        langNeedsRestart = L10n.setLanguage(newValue)
+                    }
+                }
+                if langNeedsRestart {
+                    HStack {
+                        Text("切换后需重启应用生效")
+                            .font(.caption2).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("立即重启") { L10n.relaunch() }
+                    }
+                }
+                LabeledContent("运行日志") {
+                    Button("查看应用日志…") { showLog = true }
+                        .sheet(isPresented: $showLog) { AppLogSheet() }
+                }
+            }
+
             Section("代理（留空 = 用各模板内置值）") {
                 LabeledContent("代理地址") {
                     TextField("http://127.0.0.1:7890", text: $proxy)
