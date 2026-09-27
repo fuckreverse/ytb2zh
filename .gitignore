@@ -1,0 +1,21 @@
+# Swift Package Manager build artifacts
+.build/
+.swiftpm/
+
+# Xcode and macOS local state
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+
+# Generated media and runtime artifacts
+*.mp4
+*.mov
+*.mkv
+*.wav
+*.mp3
