@@ -77,8 +77,9 @@ public struct GatewayTranslateEngine: TranslateEngine {
                     throw EngineError.engineFailure("网关响应异常")
                 }
                 guard http.statusCode == 200 else {
-                    lastError = "HTTP \(http.statusCode): \(String(data: data.prefix(300), encoding: .utf8) ?? "")"
-                    throw URLError(.badServerResponse)
+                    // 带上网关的真实状态码与响应体，避免只剩 URLError -1011 无从排查
+                    throw EngineError.engineFailure(
+                        "网关 HTTP \(http.statusCode)：\(String(data: data.prefix(400), encoding: .utf8) ?? "")")
                 }
                 // 解析 output[] → message → output_text
                 guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],

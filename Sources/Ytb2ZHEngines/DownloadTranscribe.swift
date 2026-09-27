@@ -111,8 +111,9 @@ public final class WhisperCliEngine: TranscribeEngine, @unchecked Sendable {
             for tok in seg.tokens {
                 let text = tok.text.trimmingCharacters(in: .whitespaces)
                 guard !text.isEmpty else { continue }
-                words.append(TimedWord(start: Double(tok.offsets.from) / 100.0,
-                                       end: Double(tok.offsets.to) / 100.0, text: text))
+                // whisper -ojf 的 offsets 单位是毫秒
+                words.append(TimedWord(start: Double(tok.offsets.from) / 1000.0,
+                                       end: Double(tok.offsets.to) / 1000.0, text: text))
             }
         }
         progress(1.0, "\(words.count) 词")
