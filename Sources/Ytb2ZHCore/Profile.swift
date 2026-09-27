@@ -203,6 +203,11 @@ public struct SynthOptions: Codable, Hashable, Sendable {
     public var edgeVoice: String
     /// Edge TTS 请求代理（空 = 直连；edge-tts 不读环境变量，由引擎透传）
     public var edgeProxy: String
+    // 本地 TTS（engines.synthesize == "local-say" / "sherpa-onnx" 时生效）
+    /// macOS say 音色（如 Tingting、Mei-Jia）；空 = 默认 Tingting
+    public var localVoice: String
+    /// Sherpa-Onnx 模型目录（含 model.onnx、tokens.txt、dict/ 等）；空 = 未配置
+    public var sherpaOnnxModelDir: String
 
     public init(apiKey: String = "",
                 wsURL: String = "wss://llm-tj31icsrw8blnhj0.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference",
@@ -211,17 +216,21 @@ public struct SynthOptions: Codable, Hashable, Sendable {
                 compatBaseURL: String = "https://api.openai.com/v1",
                 compatAPIKey: String = "", compatTTSModel: String = "gpt-4o-mini-tts",
                 edgeVoice: String = "zh-CN-YunxiNeural",
-                edgeProxy: String = "http://127.0.0.1:7890") {
+                edgeProxy: String = "http://127.0.0.1:7890",
+                localVoice: String = "Tingting",
+                sherpaOnnxModelDir: String = "") {
         self.apiKey = apiKey; self.wsURL = wsURL; self.model = model
         self.voice = voice; self.rps = rps
         self.compatBaseURL = compatBaseURL; self.compatAPIKey = compatAPIKey
         self.compatTTSModel = compatTTSModel; self.edgeVoice = edgeVoice
         self.edgeProxy = edgeProxy
+        self.localVoice = localVoice; self.sherpaOnnxModelDir = sherpaOnnxModelDir
     }
 
     private enum CodingKeys: String, CodingKey {
         case apiKey, wsURL, model, voice, rps
         case compatBaseURL, compatAPIKey, compatTTSModel, edgeVoice, edgeProxy
+        case localVoice, sherpaOnnxModelDir
     }
 
     public init(from decoder: Decoder) throws {
@@ -237,6 +246,8 @@ public struct SynthOptions: Codable, Hashable, Sendable {
         compatTTSModel = try c.decodeIfPresent(String.self, forKey: .compatTTSModel) ?? d.compatTTSModel
         edgeVoice = try c.decodeIfPresent(String.self, forKey: .edgeVoice) ?? d.edgeVoice
         edgeProxy = try c.decodeIfPresent(String.self, forKey: .edgeProxy) ?? d.edgeProxy
+        localVoice = try c.decodeIfPresent(String.self, forKey: .localVoice) ?? d.localVoice
+        sherpaOnnxModelDir = try c.decodeIfPresent(String.self, forKey: .sherpaOnnxModelDir) ?? d.sherpaOnnxModelDir
     }
 }
 

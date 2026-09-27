@@ -501,3 +501,84 @@ final class TranslateCoreTests: XCTestCase {
     }
 }
 
+// MARK: - 本地 TTS 引擎
+
+final class LocalTTSEngineTests: XCTestCase {
+    private func tempCacheDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ytb2zh-tts-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// say 引擎真合成：短句 → mp3 + 时长 > 0.35s + 缓存命中
+    func testLocalSaySynthesize() async throws {
+        let dir = try tempCacheDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var opts = SynthOptions()
+        opts.localVoice = "Tingting"
+        let (url, dur) = try await LocalSayTTSEngine().synthesize(
+            text: "你好世界，这是本地语音合成测试。", cacheKey: "cached-tts-001", cacheDir: dir, options: opts)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertGreaterThan(dur, 0.35)
+        XCTAssertEqual(url.pathExtension, "mp3")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("cached-tts-001.duration").path))
+
+        // 幂等缓存命中：同 key 再次合成直接返回
+        let (url2, dur2) = try await LocalSayTTSEngine().synthesize(
+            text: "你好世界，这是本地语音合成测试。", cacheKey: "cached-tts-001", cacheDir: dir, options: opts)
+        XCTAssertEqual(url2, url)
+        XCTAssertEqual(dur2, dur, accuracy: 0.01)
+    }
+
+    /// sherpa-onnx：二进制缺失时报可操作错误（含下载提示）
+    func testSherpaOnnxBinaryMissing() async throws {
+        let dir = try tempCacheDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var opts = SynthOptions()
+        opts.sherpaOnnxModelDir = dir.path
+        do {
+            _ = try await SherpaOnnxTTSEngine().synthesize(
+                text: "你好", cacheKey: "so-missing-\(UUID().uuidString)", cacheDir: dir, options: opts)
+            XCTFail("应抛二进制缺失错误")
+        } catch let e as EngineError {
+            guard case .engineFailure(let msg) = e else { return XCTFail("错误类型不对：\(e)") }
+            XCTAssertTrue(msg.contains("sherpa-onnx-offline-tts"), "提示应含二进制名：\(msg)")
+        }
+    }
+
+    /// sherpa-onnx：模型目录未配置时报清晰错误
+    func testSherpaOnnxModelDirMissing() async throws {
+        let dir = try tempCacheDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var opts = SynthOptions()
+        opts.sherpaOnnxModelDir = ""
+        do {
+            _ = try await SherpaOnnxTTSEngine().synthesize(
+                text: "你好", cacheKey: "so-missing-2", cacheDir: dir, options: opts)
+            XCTFail("应抛模型目录缺失错误")
+        } catch let e as EngineError {
+            guard case .engineFailure(let msg) = e else { return XCTFail("错误类型不对：\(e)") }
+            XCTAssertTrue(msg.contains("模型目录"), "提示应含模型目录：\(msg)")
+        }
+    }
+
+    /// SynthOptions 新字段向后兼容：老 JSON（无 localVoice/sherpaOnnxModelDir）解码不掉默认值
+    func testSynthOptionsBackwardCompat() throws {
+        let legacyJSON = """
+        {"apiKey": "", "wsURL": "wss://x", "model": "m", "voice": "v", "rps": 3,
+         "compatBaseURL": "https://api.openai.com/v1", "compatAPIKey": "", "compatTTSModel": "t",
+         "edgeVoice": "zh-CN-YunxiNeural", "edgeProxy": "http://127.0.0.1:7890"}
+        """
+        let opts = try JSONDecoder().decode(SynthOptions.self, from: Data(legacyJSON.utf8))
+        XCTAssertEqual(opts.localVoice, "Tingting")
+        XCTAssertEqual(opts.sherpaOnnxModelDir, "")
+        // 编码往返不丢新字段
+        let data = try JSONEncoder().encode(opts)
+        let round = try JSONDecoder().decode(SynthOptions.self, from: data)
+        XCTAssertEqual(round.localVoice, opts.localVoice)
+        XCTAssertEqual(round.sherpaOnnxModelDir, opts.sherpaOnnxModelDir)
+    }
+}
+
+

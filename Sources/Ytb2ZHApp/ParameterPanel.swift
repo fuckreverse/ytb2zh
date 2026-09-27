@@ -142,6 +142,25 @@ struct ParameterPanel: View {
                 .labelsHidden()
                 .frame(width: 220)
             }
+            LabeledContent("本地 say 音色") {
+                Picker("", selection: $profile.synth.localVoice) {
+                    Text("婷婷（经典女声）").tag("Tingting")
+                    Text("波波（增强女声）").tag("Bobo (Enhanced)")
+                    Text("Eddy（男声）").tag("Eddy (中文（中国大陆）)")
+                    Text("Flo（女声）").tag("Flo (中文（中国大陆）)")
+                    Text("Rocko（男声）").tag("Rocko (中文（中国大陆）)")
+                    Text("Shelley（女声）").tag("Shelley (中文（中国大陆）)")
+                }
+                .labelsHidden()
+                .frame(width: 220)
+                .help("macOS 系统语音，离线可用；更多音色在系统设置 → 辅助功能 → 朗读内容安装")
+            }
+            LabeledContent("Sherpa-Onnx 模型目录") {
+                TextField("如 ~/sherpa-onnx/vits-zh-hf-theresa", text: $profile.synth.sherpaOnnxModelDir)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 340)
+            }
+            .help("目录需含 model.onnx、tokens.txt、dict/；二进制自动查找 ~/sherpa-onnx/bin/ 或 PATH。从 github.com/k2-fsa/sherpa-onnx/releases 下载")
         }
     }
 

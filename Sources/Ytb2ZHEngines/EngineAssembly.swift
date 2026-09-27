@@ -21,7 +21,8 @@ public enum EngineAssembly {
                 GatewayTranslateEngine().descriptor, OpenAICompatTranslateEngine().descriptor]),
             .init(step: .synthesize, descriptors: [
                 BailianSynthEngine().descriptor, OpenAITTSEngine().descriptor,
-                EdgeTTSEngine().descriptor, NullSynthEngine().descriptor]),
+                EdgeTTSEngine().descriptor, LocalSayTTSEngine().descriptor,
+                SherpaOnnxTTSEngine().descriptor, NullSynthEngine().descriptor]),
             .init(step: .schedule, descriptors: [
                 DriftSchedulerEngine().descriptor, NullSchedulerEngine().descriptor]),
             .init(step: .compose, descriptors: [FFmpegComposeEngine().descriptor]),
@@ -52,6 +53,8 @@ public enum EngineAssembly {
             switch id(.synthesize, "bailian") {
             case "openai-tts": OpenAITTSEngine()
             case "edge-tts": EdgeTTSEngine()
+            case "local-say": LocalSayTTSEngine()
+            case "sherpa-onnx": SherpaOnnxTTSEngine()
             case "none": NullSynthEngine()
             default: BailianSynthEngine()
             }
