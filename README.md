@@ -197,4 +197,6 @@ make bundle               # 打包 .app（含 i18n 资源与图标）
 
 ## 许可证
 
-MIT，详见 [LICENSE](LICENSE)。
+本项目源码以 MIT 许可证分发，详见 [LICENSE](LICENSE)。
+
+内嵌与运行时使用的第三方组件遵循其各自许可证（Eigen MPL-2.0、demucs.cpp / whisper.cpp / Demucs MIT、sherpa-onnx Apache-2.0 等），完整清单与合规说明（含 sherpa-onnx TTS 链接 espeak-ng 的 GPL-3.0 注意事项）见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。仅以源码形式分发/使用时，MIT 即为全部所需。
