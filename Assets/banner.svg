@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="500" viewBox="0 0 1600 500">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1026"/>
+      <stop offset="0.55" stop-color="#101736"/>
+      <stop offset="1" stop-color="#1a1040"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#e83e8c"/>
+    </linearGradient>
+    <linearGradient id="win" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c2749"/>
+      <stop offset="1" stop-color="#131b38"/>
+    </linearGradient>
+    <radialGradient id="glowCyan" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowPink" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#e83e8c" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#e83e8c" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1600" height="500" fill="url(#bg)"/>
+  <circle cx="1250" cy="120" r="300" fill="url(#glowCyan)"/>
+  <circle cx="1420" cy="420" r="280" fill="url(#glowPink)"/>
+
+  <!-- filmstrip top / bottom -->
+  <g fill="#ffffff" fill-opacity="0.05">
+    <rect x="0" y="26" width="1600" height="56"/>
+    <rect x="0" y="418" width="1600" height="56"/>
+  </g>
+  <g fill="#ffffff" fill-opacity="0.10">
+    <!-- top sprocket holes -->
+    <g>
+      <rect x="30" y="40" width="26" height="28" rx="5"/><rect x="106" y="40" width="26" height="28" rx="5"/>
+      <rect x="182" y="40" width="26" height="28" rx="5"/><rect x="258" y="40" width="26" height="28" rx="5"/>
+      <rect x="334" y="40" width="26" height="28" rx="5"/><rect x="410" y="40" width="26" height="28" rx="5"/>
+      <rect x="486" y="40" width="26" height="28" rx="5"/><rect x="562" y="40" width="26" height="28" rx="5"/>
+      <rect x="638" y="40" width="26" height="28" rx="5"/><rect x="714" y="40" width="26" height="28" rx="5"/>
+      <rect x="790" y="40" width="26" height="28" rx="5"/><rect x="866" y="40" width="26" height="28" rx="5"/>
+      <rect x="942" y="40" width="26" height="28" rx="5"/><rect x="1018" y="40" width="26" height="28" rx="5"/>
+      <rect x="1094" y="40" width="26" height="28" rx="5"/><rect x="1170" y="40" width="26" height="28" rx="5"/>
+      <rect x="1246" y="40" width="26" height="28" rx="5"/><rect x="1322" y="40" width="26" height="28" rx="5"/>
+      <rect x="1398" y="40" width="26" height="28" rx="5"/><rect x="1474" y="40" width="26" height="28" rx="5"/>
+    </g>
+    <!-- bottom sprocket holes -->
+    <g>
+      <rect x="30" y="432" width="26" height="28" rx="5"/><rect x="106" y="432" width="26" height="28" rx="5"/>
+      <rect x="182" y="432" width="26" height="28" rx="5"/><rect x="258" y="432" width="26" height="28" rx="5"/>
+      <rect x="334" y="432" width="26" height="28" rx="5"/><rect x="410" y="432" width="26" height="28" rx="5"/>
+      <rect x="486" y="432" width="26" height="28" rx="5"/><rect x="562" y="432" width="26" height="28" rx="5"/>
+      <rect x="638" y="432" width="26" height="28" rx="5"/><rect x="714" y="432" width="26" height="28" rx="5"/>
+      <rect x="790" y="432" width="26" height="28" rx="5"/><rect x="866" y="432" width="26" height="28" rx="5"/>
+      <rect x="942" y="432" width="26" height="28" rx="5"/><rect x="1018" y="432" width="26" height="28" rx="5"/>
+      <rect x="1094" y="432" width="26" height="28" rx="5"/><rect x="1170" y="432" width="26" height="28" rx="5"/>
+      <rect x="1246" y="432" width="26" height="28" rx="5"/><rect x="1322" y="432" width="26" height="28" rx="5"/>
+      <rect x="1398" y="432" width="26" height="28" rx="5"/><rect x="1474" y="432" width="26" height="28" rx="5"/>
+    </g>
+  </g>
+
+  <!-- left: title block -->
+  <g>
+    <rect x="90" y="168" width="10" height="118" rx="5" fill="url(#accent)"/>
+    <text x="126" y="256" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="104" font-weight="700" fill="#ffffff" letter-spacing="1">ytb2zh</text>
+    <text x="128" y="316" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="27" font-weight="400" fill="#aeb9d8">English Videos</text>
+    <path d="M 336 306 l 26 0 m -9 -8 l 9 8 l -9 8" stroke="url(#accent)" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="380" y="316" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="27" font-weight="400" fill="#aeb9d8">Chinese Subtitles + AI Dubbing</text>
+    <text x="128" y="368" font-family="PingFang SC, Helvetica Neue, sans-serif" font-size="21" fill="#6f7ba0" letter-spacing="6">macOS · Swift · 实时译配播放器</text>
+  </g>
+
+  <!-- connector arrow -->
+  <g stroke="url(#accent)" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.9">
+    <path d="M 760 240 H 852"/>
+    <path d="M 838 226 L 856 240 L 838 254"/>
+  </g>
+
+  <!-- right: player window mock -->
+  <g>
+    <rect x="900" y="120" width="560" height="280" rx="18" fill="url(#win)" stroke="#3a4a80" stroke-width="1.5"/>
+    <!-- traffic lights -->
+    <circle cx="930" cy="148" r="7" fill="#ff5f57"/>
+    <circle cx="952" cy="148" r="7" fill="#febc2e"/>
+    <circle cx="974" cy="148" r="7" fill="#28c840"/>
+    <!-- waveform -->
+    <g fill="url(#accent)">
+      <rect x="940" y="216" width="7" height="18" rx="3.5"/>
+      <rect x="956" y="206" width="7" height="38" rx="3.5"/>
+      <rect x="972" y="192" width="7" height="66" rx="3.5"/>
+      <rect x="988" y="176" width="7" height="98" rx="3.5"/>
+      <rect x="1004" y="196" width="7" height="58" rx="3.5"/>
+      <rect x="1020" y="160" width="7" height="130" rx="3.5"/>
+      <rect x="1036" y="186" width="7" height="78" rx="3.5"/>
+      <rect x="1052" y="204" width="7" height="42" rx="3.5"/>
+      <rect x="1068" y="170" width="7" height="110" rx="3.5"/>
+      <rect x="1084" y="198" width="7" height="54" rx="3.5"/>
+      <rect x="1100" y="212" width="7" height="26" rx="3.5"/>
+      <rect x="1116" y="188" width="7" height="74" rx="3.5"/>
+      <rect x="1132" y="176" width="7" height="98" rx="3.5"/>
+      <rect x="1148" y="200" width="7" height="50" rx="3.5"/>
+      <rect x="1164" y="214" width="7" height="22" rx="3.5"/>
+      <rect x="1180" y="192" width="7" height="66" rx="3.5"/>
+      <rect x="1196" y="182" width="7" height="86" rx="3.5"/>
+      <rect x="1212" y="206" width="7" height="38" rx="3.5"/>
+      <rect x="1228" y="214" width="7" height="22" rx="3.5"/>
+      <rect x="1244" y="196" width="7" height="58" rx="3.5"/>
+      <rect x="1260" y="208" width="7" height="34" rx="3.5"/>
+      <rect x="1276" y="218" width="7" height="14" rx="3.5"/>
+      <rect x="1292" y="202" width="7" height="46" rx="3.5"/>
+      <rect x="1308" y="212" width="7" height="26" rx="3.5"/>
+      <rect x="1324" y="204" width="7" height="42" rx="3.5"/>
+      <rect x="1340" y="216" width="7" height="18" rx="3.5"/>
+    </g>
+    <!-- play button -->
+    <circle cx="1180" cy="300" r="34" fill="#ffffff" fill-opacity="0.12" stroke="#ffffff" stroke-opacity="0.5" stroke-width="2"/>
+    <path d="M 1170 282 L 1198 300 L 1170 318 Z" fill="#ffffff"/>
+    <!-- progress -->
+    <rect x="930" y="352" width="500" height="6" rx="3" fill="#2a3560"/>
+    <rect x="930" y="352" width="330" height="6" rx="3" fill="url(#accent)"/>
+    <!-- subtitle bars -->
+    <rect x="930" y="370" width="200" height="12" rx="6" fill="#ffffff" fill-opacity="0.85"/>
+    <rect x="1140" y="370" width="150" height="12" rx="6" fill="#ffffff" fill-opacity="0.45"/>
+  </g>
+
+  <!-- bottom-left mini pipeline -->
+  <g font-family="Menlo, monospace" font-size="15" fill="#8b97bd">
+    <text x="128" y="404">download → transcribe → translate → tts → compose</text>
+  </g>
+</svg>

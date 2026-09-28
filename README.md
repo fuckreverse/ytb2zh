@@ -1,8 +1,35 @@
+<div align="center">
+
+<img src="Assets/banner.png" alt="ytb2zh banner" width="100%"/>
+
 # ytb2zh
 
-英文视频 → 中文字幕 + 中文配音 的 macOS 客户端，以及一个"边处理边播放"的实时中文配音播放器（伪直播模式）。Swift 单语言实现，外部能力（yt-dlp / whisper.cpp / ffmpeg / edge-tts / demucs）全部以 sidecar 接入，每一步都是协议化可插拔引擎。
+**英文视频 → 中文字幕 + 中文配音** 的 macOS 客户端，
+以及一个「边处理边播放」的实时中文配音播放器（伪直播模式）。
+
+![Swift](https://img.shields.io/badge/Swift-6.0-F05138?logo=swift&logoColor=white)
+![Platform](https://img.shields.io/badge/macOS-14+-000000?logo=apple&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-3da639)
+![Engines](https://img.shields.io/badge/九步引擎-协议化可插拔-8a63d2)
+
+[快速开始](#依赖需自行准备) · [实时播放器](#实时播放器追赶式伪直播) · [CLI 用法](#cli) · [GUI](#gui) · [从源码构建](#从源码构建)
+
+</div>
+
+---
+
+Swift 单语言实现，视频/元数据提取用内置 Videx 纯 Swift 库（YouTube/B站/抖音/TikTok），其余外部能力（whisper.cpp / ffmpeg / edge-tts / demucs）以 sidecar 接入，每一步都是协议化可插拔引擎；yt-dlp 仅作为备用（内置提取失败时才按需自动下载并切换使用，默认零依赖）。
 
 架构源自 vid2zh 管线（`~/vid2zh`，Python 原型，已验证全片效果），本仓库是工程化客户端版本。功能吸收自 VideoLingo / pyVideoTrans 的评估结论（术语表、三步翻译、Netflix 字幕标准、多通道引擎、批量任务、断点编辑等）。
+
+## 核心特性
+
+- 🎬 **一站式译配**：下载 → 转录 → 语义切分 → 翻译 → 配音 → 成片，九步管线全自动，每步产物落盘可断点续跑、可人工修订后从任意步重跑。
+- 📡 **实时伪直播**：处理约 4x 实时，边处理边用 AVPlayer 看——HLS 分片滚动推进、双语字幕同步、seek 回看已配音区间。
+- 🧩 **协议化引擎**：九步各自对应一个 Swift 协议，换引擎 = 实现协议 + 注册一行；本地 whisper.cpp / demucs.cpp / sherpa-onnx / edge-tts 内置直连，默认零外部依赖。
+- 🌐 **内置 Videx 提取**：纯 Swift 实现 YouTube / B站 / 抖音 / TikTok 的视频与元数据提取、搜索、频道浏览；yt-dlp 仅作按需兑底。
+- 📖 **翻译质量**：术语表统一译法、三步翻译（直译→反思→意译）、领域感知 prompt、Netflix 单行字幕标准、中文配音时长自适应。
+- 🖥 **完整 GUI**：封面墙搜索/媒体库/订阅预翻译/任务中心（译文与术语编辑器）/参数面板，CLI 与 GUI 共享同一引擎内核。
 
 ## 实时播放器（追赶式伪直播）
 
@@ -12,7 +39,7 @@ GUI 右上角"实时播放"：贴 URL 或在搜索栏点选封面，处理到哪
 - **播放通道**：不走本地 HTTP——AVAssetResourceLoaderDelegate + 自定义 scheme `ytb2zh-live://<token>/live.m3u8` 磁盘直读分片，零 ATS 风险。
 - **实时双语字幕**：每窗口增量重写 SRT，播放器按 0.25s 轮询同步显示当前字幕（双语随 Profile）。
 - **重播秒开**：同 URL + 同 Profile 的已完成任务直接复用已生成的直播目录与成片，零等待开播。
-- **搜索浏览**：yt-dlp `-J --flat-playlist` 搜索（关键词 / 频道页 / 播放列表 URL 通用），封面墙点选即播。
+- **搜索浏览**：搜索取数（关键词 / 频道页 / 播放列表 URL 通用），封面墙点选即播（Videx InnerTube 原生实现，零外部依赖；内置失效或非 YouTube 站点时回退备用 yt-dlp）。
 - **媒体库**：所有已产出成片的任务（直播或批量）在"媒体库"封面墙里一键秒播，优先复用直播目录，无则成片直读；Profile 自动取任务派生参数快照（`JobStore.loadProfileSnapshot`）。
 - **订阅预翻译**："订阅"里添加频道/播放列表，点"预翻译"自动扫最新视频、跳过已在库的，按序后台跑完整批量管线；完成即入媒体库随时秒播。未完成任务自动断点续跑。
 - **终局产物**：`#EXT-X-ENDLIST` + SRT + concat 成片 `final_zh.mp4`，与批量管线产物同构。
@@ -30,8 +57,8 @@ auto    demucs*   whisper  punct/LLM  gateway-terms*  LLM    百炼/兼容/Edge 
 
 | 步骤 | 引擎 |
 | --- | --- |
-| download | `auto`（http→yt-dlp、本地路径→导入）、`yt-dlp`、`file` |
-| separate | `none`、`demucs`（人声/伴奏分离，需 `pip3 install demucs`） |
+| download | `auto`（Videx 原生优先、内置失败时按需下载 yt-dlp 兑底、本地路径→导入）、`videx`、`yt-dlp`、`file` |
+| separate | `none`、`demucs`（人声/伴奏分离，demucs.cpp 进程内推理，权重自动下载） |
 | transcribe | `whisper-cpp`（本地词级时间戳）、`srt`（外部 SRT 导入） |
 | segment | `punct`（标点规则切分）、`llm-seg`（punct 粗切 + LLM 重组） |
 | summarize | `none`、`gateway-terms`（LLM 术语提取 → terminology.json，可人工修订） |
@@ -69,12 +96,10 @@ auto    demucs*   whisper  punct/LLM  gateway-terms*  LLM    百炼/兼容/Edge 
 - **系统日志**：warn/error 同步镜像到 NSLog（Console.app 可搜 `ytb2zh`），便于用户反馈时抓取。
 - CLI 的 stdout JSON 是接口契约，不走全局日志。
 
-## 图标
+## 图标与品牌资源
 
-```bash
-make icon      # Tools/make_icon.sh：SVG → 1024px PNG → iconutil → Assets/AppIcon.icns
-make bundle    # 打包时自动把 icns 拷入 Contents/Resources/（Info.plist 已配 CFBundleIconFile）
-```
+- 应用图标：`make icon`（Tools/make_icon.sh：SVG → 1024px PNG → iconutil → Assets/AppIcon.icns），`make bundle` 打包时自动拷入（Info.plist 已配 CFBundleIconFile）
+- README 横幅：`Assets/banner.svg`（源文件）→ `Assets/banner.png`，重生成：`rsvg-convert -w 1600 -h 500 Assets/banner.svg -o Assets/banner.png`
 
 ## 布局
 
@@ -88,12 +113,24 @@ Tests/                   单测（调度器 fixture / 切分 / SRT / Netflix 字
 
 ## 依赖（需自行准备）
 
-- whisper.cpp：`brew install whisper-cpp`；模型放 `~/vid2zh/models/ggml-medium.en-q5_0.bin`（或改 Profile）
 - ffmpeg / ffprobe：`brew install ffmpeg`
-- yt-dlp：优先找 App bundle / `~/.ytb2zh/bin/yt-dlp_macos`，其次 PATH
+- yt-dlp：默认不安装。内置 Videx 提取失败时自动从官方 Releases 下载到 `~/.ytb2zh/bin/yt-dlp_macos`（也可自行放入该目录或加入 PATH）
 - 网关 LLM：`http://127.0.0.1:15000/v1/responses`（Responses API）
 - 百炼：在 Profile 中配置 `synth.apiKey`；默认 Profile 不包含 API Key（WS 地址仍有默认值）
-- 可选：`pip3 install edge-tts`（免费微软语音，需可直连或经 `synth.edgeProxy` 代理访问微软端点）、`pip3 install demucs`（人声分离，torch 较大）
+
+内嵌引擎（无需安装）：whisper.cpp（Metal 加速）、edge-tts（纯 Swift 直连微软端点）、sherpa-onnx 离线 TTS、demucs.cpp 人声分离——权重（whisper ggml / sherpa vits / demucs htdemucs，首次使用时自动下载到 `~/.ytb2zh/models/`）。
+
+## 从源码构建
+
+原生依赖 whisper.xcframework / sherpa-onnx 静态库（约 131MB）不进 git，clone 后先执行：
+
+```bash
+./Scripts/bootstrap-deps.sh   # 从官方 Releases 下载并重建 Frameworks/
+swift build                   # 或 make build
+```
+
+whisper 转录模型默认从 HuggingFace 下载 `ggml-base.en`；本地已有模型可在应用设置 → 模型提供者里配置路径。
+
 
 ## CLI
 
@@ -146,7 +183,7 @@ make bundle               # 打包 .app（含 i18n 资源与图标）
 
 本项目站在众多开源项目的肩膀上，感谢它们：
 
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) —— YouTube 等平台的视频/元数据下载与搜索（下载步、搜索浏览、订阅频道解析）
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) —— 备用下载与搜索兑底（内置 Videx 提取/搜索失效或非 YouTube 站点时按需自动下载使用）
 - [whisper.cpp](https://github.com/ggerganov/whisper.cpp) —— 高性能本地词级时间戳语音识别（转录步）
 - [FFmpeg](https://ffmpeg.org) —— 转码、混音、字幕烧录、成片合成（合成步 / MediaCompat）
 - [Demucs](https://github.com/adefossez/demucs) —— 人声/伴奏分离，让保留 BGM 的中文配音成为可能（人声分离步）
