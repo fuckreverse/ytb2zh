@@ -8,6 +8,11 @@ DerivedData/
 xcuserdata/
 .DS_Store
 
+# Vendored native dependencies (whisper.xcframework + sherpa-onnx static libs, ~131MB)
+# If lost, re-obtain per docs: whisper b5130 xcframework (trimmed) + sherpa-onnx v1.13.8 osx-arm64 static-lib tarball
+# (demucs.cpp is source-vendored in Sources/CDemucsCpp — no binary artifact)
+Frameworks/
+
 # Local credentials and environment overrides
 .env
 .env.*
