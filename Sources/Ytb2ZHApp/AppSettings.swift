@@ -143,7 +143,8 @@ enum AppSettings {
         }
 
         if let (pr, mo) = resolve(.transcribe), pr.kind == .whisperLocal {
-            p.engines[StepID.transcribe.rawValue] = "whisper-cpp"
+            // whisper.cpp 已内嵌（进程内 Metal 推理）；mo.name 为模型名或路径，缺失时自动下载
+            p.engines[StepID.transcribe.rawValue] = "whisper-native"
             p.transcribe.modelPath = mo.name
         }
 

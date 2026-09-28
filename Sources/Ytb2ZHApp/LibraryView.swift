@@ -3,7 +3,7 @@ import Ytb2ZHCore
 import Ytb2ZHEngines
 
 // MARK: - 媒体库：所有已产出成片的任务，一键秒播（直播目录或成片直读）
-//       按频道/时间分组 + 搜索 + 视频详情（标题/简介/频道/播放量等，yt-dlp -J 自动补齐）
+//       按频道/时间分组 + 搜索 + 视频详情（标题/简介/频道/播放量等，Videx 优先、yt-dlp 备用自动补齐）
 
 enum LibraryGroupMode: String, CaseIterable {
     case byChannel, byDate

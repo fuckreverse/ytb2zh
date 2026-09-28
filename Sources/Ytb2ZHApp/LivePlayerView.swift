@@ -346,7 +346,8 @@ struct LivePlayerView: View {
         let proxy = AppSettings.effectiveProxy(fallback: profile.download.proxy)
         Task.detached {
             do {
-                let found = try VideoCatalogService().search(q, limit: 24, offset: offset, proxy: proxy)
+                let page = try VideoCatalogService().searchPage(q, limit: 24, offset: offset, proxy: proxy)
+                let found = page.videos
                 await MainActor.run {
                     if reset {
                         results = found
@@ -356,7 +357,7 @@ struct LivePlayerView: View {
                         let known = Set(results.map(\.id))
                         results += found.filter { !known.contains($0.id) }
                     }
-                    loadedAll = found.count < 24
+                    loadedAll = !page.hasMore
                     refreshStatuses()
                     searching = false; loadingMore = false
                 }

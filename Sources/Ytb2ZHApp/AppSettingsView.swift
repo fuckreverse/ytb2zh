@@ -99,7 +99,7 @@ private struct NetworkTab: View {
                         Toggle("Edge TTS 语音合成", isOn: $forEdgeTTS).toggleStyle(.checkbox)
                     }
                 }
-                .help("yt-dlp 下载、搜索取数与 edge-tts 走外网；百炼/兼容 API 直连国内或由 API 端自行处理，不受此开关影响")
+                .help("Videx 原生提取优先；备用 yt-dlp（按需自动下载）、搜索取数与 edge-tts 走外网；百炼/兼容 API 直连国内或由 API 端自行处理，不受此开关影响")
             }
 
             Section("任务存储位置") {
