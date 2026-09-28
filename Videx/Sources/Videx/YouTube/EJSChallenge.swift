@@ -1,3 +1,4 @@
+// 提取逻辑部分参考/移植自 yt-dlp（Unlicense，公有领域）。
 import Foundation
 
 /// 现代版 YouTube 挑战求解器（移植 yt-dlp/ejs 的 solver 思路到 JSC）。

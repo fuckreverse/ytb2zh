@@ -38,3 +38,7 @@
 
 - **Microsoft Edge 在线 TTS**：`EdgeTTSSwift.swift` 为独立的协议实现，未复制 [rany2/edge-tts](https://github.com/rany2/edge-tts) 的任何代码（该仓库许可证为自定义条款），故不产生源码许可义务；实际使用受微软相应服务条款约束。
 - **LLM 网关 / OpenAI 兼容 API / 阿里云百炼**：按各服务商的 API 服务条款使用。
+
+## 6. Videx 提取逻辑来源
+
+`Videx/` 为本项目的独立实现（MIT），其中部分提取逻辑参考或移植自 [yt-dlp](https://github.com/yt-dlp/yt-dlp)（**Unlicense**，公有领域奉献——复制、修改、再许可均无条件，不产生任何署名或开源义务）。相关文件头部有来源注释，仅为工程溯源便利。

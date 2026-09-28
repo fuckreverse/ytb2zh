@@ -1,3 +1,4 @@
+// 提取逻辑部分参考/移植自 yt-dlp（Unlicense，公有领域）。
 import Foundation
 
 /// 从 player base.js 中定位并提取 JS 挑战代码，交由 JSRuntime 求解。

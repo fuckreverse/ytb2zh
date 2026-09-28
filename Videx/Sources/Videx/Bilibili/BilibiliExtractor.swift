@@ -1,3 +1,4 @@
+// 提取逻辑部分参考/移植自 yt-dlp（Unlicense，公有领域）。
 import Foundation
 
 /// Bilibili 提取器：view API → playurl(DASH) → 字幕。

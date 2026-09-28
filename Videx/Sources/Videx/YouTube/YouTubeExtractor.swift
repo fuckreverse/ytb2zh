@@ -1,3 +1,4 @@
+// 提取逻辑部分参考/移植自 yt-dlp（Unlicense，公有领域）。
 import Foundation
 
 /// YouTube 提取器：InnerTube 多客户端轮询 + JSC 挑战求解。

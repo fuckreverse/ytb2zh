@@ -1,3 +1,4 @@
+// 提取逻辑部分参考/移植自 yt-dlp（Unlicense，公有领域）。
 import Foundation
 
 // MARK: - YouTube 搜索/浏览门面（纯 InnerTube，无 yt-dlp 依赖）

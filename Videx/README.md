@@ -81,3 +81,7 @@ VIDEX_LIVE=1 VIDEX_PROXY=http://127.0.0.1:7890 \
 ```
 
 离线测试覆盖：URL 解析（四站点）、YouTube 挑战提取与 JSC 求解（合成混淆样本）、TikTok WAF PoW（合成 + 真实挑战页 fixture）、WBI 签名（黄金值由独立 Python 实现交叉验证）、aweme 解析（真实 app/web 响应 fixture）、DASH/player response 解析、字幕转换、Cookie/代理/注册表路由。
+
+## 来源与致谢
+
+本库为独立实现，部分提取逻辑参考或移植自 [yt-dlp](https://github.com/yt-dlp/yt-dlp)（Unlicense，公有领域——复制、修改、再许可均无任何条件）；B 站 WBI 签名等另参考 bilibili-API-collect 等公开社区文档。各文件头部的来源注释仅为工程溯源便利，非许可义务。
