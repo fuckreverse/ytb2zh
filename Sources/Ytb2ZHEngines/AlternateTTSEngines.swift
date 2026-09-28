@@ -71,11 +71,11 @@ public struct OpenAITTSEngine: SpeechSynthesisEngine {
     }
 }
 
-// MARK: - Edge TTS 引擎（python -m edge_tts sidecar，免费微软神经语音）
+// MARK: - Edge TTS 引擎（纯 Swift 直连微软端点，免费神经语音，零外部依赖）
 
 public struct EdgeTTSEngine: SpeechSynthesisEngine {
     public let descriptor = EngineDescriptor(
-        "edge-tts", "Edge TTS（免费）", "python -m edge_tts，需 pip install edge-tts")
+        "edge-tts", "Edge TTS（免费·内置）", "纯 Swift 直连微软端点，无需安装任何依赖")
     public var supportsRateControl: Bool { false }
 
     public init() {}
@@ -92,29 +92,20 @@ public struct EdgeTTSEngine: SpeechSynthesisEngine {
             return (mp3, cached)
         }
 
-        guard let python = SidecarPaths.which("python3") else {
-            throw EngineError.engineFailure("未找到 python3")
-        }
-        try? fm.removeItem(at: mp3)
-        let runner = ProcessRunner()
-        // edge-tts 对微软端点时好时坏：5 次重试 + 递增退避
+        // 微软端点时好时坏：5 次重试 + 递增退避；每次重试重新生成 Sec-MS-GEC 令牌
         var lastError = "unknown"
         for attempt in 0..<5 {
-            // edge-tts 原生支持 --proxy（比环境变量透传可靠）
-            var argv = ["-m", "edge_tts", "--voice", options.edgeVoice,
-                        "--text", text, "--write-media", mp3.path]
-            if !options.edgeProxy.isEmpty { argv += ["--proxy", options.edgeProxy] }
-            let r = try runner.run(python, argv)
-            if r.code == 0, fm.fileExists(atPath: mp3.path) {
+            do {
+                let data = try await EdgeTTSClient(proxy: options.edgeProxy)
+                    .synthesize(text: text, voice: options.edgeVoice)
+                try data.write(to: mp3)
                 let dur = probeDuration(mp3) ?? 0
                 try? String(format: "%.3f", dur).write(to: durPath, atomically: true, encoding: .utf8)
                 if dur >= 0.35 { return (mp3, dur) }
                 lastError = "合成时长异常 \(dur)s"
-            } else {
-                lastError = r.stderr.suffix(300).description
-                if lastError.contains("No module named") {
-                    throw EngineError.engineFailure("edge-tts 未安装：pip3 install edge-tts")
-                }
+            } catch {
+                lastError = error.localizedDescription
+                if lastError.contains("未安装") { throw error }  // 保留语义兼容，纯 Swift 实现下不应出现
             }
             try await Task.sleep(for: .seconds(3 * (attempt + 1)))
         }

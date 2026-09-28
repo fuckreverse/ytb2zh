@@ -8,11 +8,13 @@ public enum EngineAssembly {
     public static func registry() -> EngineRegistry {
         EngineRegistry([
             .init(step: .download, descriptors: [
-                SmartDownloadEngine().descriptor, YtDlpDownloadEngine().descriptor, FileImportEngine().descriptor]),
+                SmartDownloadEngine().descriptor, VidexDownloadEngine().descriptor,
+                YtDlpDownloadEngine().descriptor, FileImportEngine().descriptor]),
             .init(step: .separate, descriptors: [
-                NullVocalSeparator().descriptor, DemucsVocalSeparator().descriptor]),
+                NullVocalSeparator().descriptor, NativeDemucsSeparator().descriptor]),
             .init(step: .transcribe, descriptors: [
-                WhisperCliEngine().descriptor, SrtTranscribeEngine().descriptor]),
+                NativeWhisperEngine().descriptor, WhisperCliEngine().descriptor,
+                SrtTranscribeEngine().descriptor]),
             .init(step: .segment, descriptors: [
                 PunctSegmentationEngine().descriptor, LLMSegmentationEngine().descriptor]),
             .init(step: .summarize, descriptors: [
@@ -38,14 +40,21 @@ public enum EngineAssembly {
         }
 
         let downloader: any DownloadEngine = {
-            switch id(.download, "yt-dlp") {
+            switch id(.download, "auto") {
             case "auto": SmartDownloadEngine()
+            case "videx": VidexDownloadEngine()
             case "file": FileImportEngine()
             default: YtDlpDownloadEngine()
             }
         }()
-        let separator: (any VocalSeparationEngine)? = id(.separate, "none") == "demucs" ? DemucsVocalSeparator() : nil
-        let transcriber: any TranscribeEngine = id(.transcribe, "whisper-cpp") == "srt" ? SrtTranscribeEngine() : WhisperCliEngine()
+        let separator: (any VocalSeparationEngine)? = id(.separate, "none") == "demucs" ? NativeDemucsSeparator() : nil
+        let transcriber: any TranscribeEngine = {
+            switch id(.transcribe, "whisper-native") {
+            case "whisper-cpp": WhisperCliEngine()   // 旧 sidecar，向后兼容
+            case "srt": SrtTranscribeEngine()
+            default: NativeWhisperEngine()            // 新默认：内嵌 whisper.cpp
+            }
+        }()
         let segmenter: any SegmentationEngine = id(.segment, "punct") == "llm-seg" ? LLMSegmentationEngine() : PunctSegmentationEngine()
         let terminologist: (any TerminologyEngine)? = id(.summarize, "none") == "gateway-terms" ? GatewayTerminologyEngine() : nil
         let translator: any TranslateEngine = id(.translate, "gateway") == "compat" ? OpenAICompatTranslateEngine() : GatewayTranslateEngine()

@@ -72,16 +72,10 @@ public struct ProcessRunner: Sendable {
 }
 
 public enum SidecarPaths {
-    /// yt-dlp：优先捆绑资源，其次用户目录缓存，再次 PATH
+    /// yt-dlp：仅按需安装的缓存目录，或 PATH（默认不捆绑；由 YtDlpInstaller 负责下载）
     public static var ytDlp: String {
-        let fm = FileManager.default
-        // App bundle 内（make bundle 时嵌入）
-        if let exec = Bundle.main.executableURL {
-            let bundled = exec.deletingLastPathComponent().appendingPathComponent("yt-dlp_macos")
-            if fm.isExecutableFile(atPath: bundled.path) { return bundled.path }
-        }
         let cached = NSHomeDirectory() + "/.ytb2zh/bin/yt-dlp_macos"
-        if fm.isExecutableFile(atPath: cached) { return cached }
+        if FileManager.default.isExecutableFile(atPath: cached) { return cached }
         return which("yt-dlp") ?? "yt-dlp"
     }
 

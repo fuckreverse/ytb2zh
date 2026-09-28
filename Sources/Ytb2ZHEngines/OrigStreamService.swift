@@ -67,8 +67,17 @@ public struct OrigStreamService: Sendable {
         return nil
     }
 
-    /// 解析单视频可播流（-j 全量格式后本地挑选）
+    /// 解析单视频可播流：Videx 原生优先（muxed 直链即可播，抖音/TikTok 全 muxed、
+    /// YouTube itag 18/22）；拿不到 muxed（如只剩 DASH）时按需准备 yt-dlp 后走 HLS 路线。
     public func resolve(url: String, proxy: String) throws -> OrigStreamInfo {
+        if VidexBridge.canHandle(url) {
+            if let info = try? VidexBridge.extractSync(url, proxy: proxy),
+               let stream = VidexBridge.playableStream(info) {
+                return stream
+            }
+            // 内置无 muxed 才按需下载 yt-dlp（下载失败直接抛安装错误）
+            _ = try YtDlpInstaller.ensureInstalledSync(proxy: proxy)
+        }
         let res = try ProcessRunner().run(SidecarPaths.ytDlp,
                                           Self.resolveArgs(url: url, proxy: proxy))
         guard res.code == 0, !res.stdout.isEmpty else {

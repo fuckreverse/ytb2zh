@@ -530,36 +530,37 @@ final class LocalTTSEngineTests: XCTestCase {
         XCTAssertEqual(dur2, dur, accuracy: 0.01)
     }
 
-    /// sherpa-onnx：二进制缺失时报可操作错误（含下载提示）
-    func testSherpaOnnxBinaryMissing() async throws {
+    /// sherpa-onnx（内嵌）：配置的目录存在但缺权重时报可操作错误
+    func testSherpaOnnxIncompleteModelDir() async throws {
         let dir = try tempCacheDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         var opts = SynthOptions()
-        opts.sherpaOnnxModelDir = dir.path
+        opts.sherpaOnnxModelDir = dir.path  // 空目录：存在但无 model.onnx
         do {
             _ = try await SherpaOnnxTTSEngine().synthesize(
-                text: "你好", cacheKey: "so-missing-\(UUID().uuidString)", cacheDir: dir, options: opts)
-            XCTFail("应抛二进制缺失错误")
+                text: "你好", cacheKey: "so-incomplete-\(UUID().uuidString)", cacheDir: dir, options: opts)
+            XCTFail("应抛模型不完整错误")
         } catch let e as EngineError {
             guard case .engineFailure(let msg) = e else { return XCTFail("错误类型不对：\(e)") }
-            XCTAssertTrue(msg.contains("sherpa-onnx-offline-tts"), "提示应含二进制名：\(msg)")
+            XCTAssertTrue(msg.contains("model.onnx"), "提示应含权重文件名：\(msg)")
         }
     }
 
-    /// sherpa-onnx：模型目录未配置时报清晰错误
-    func testSherpaOnnxModelDirMissing() async throws {
-        let dir = try tempCacheDir()
+    /// sherpa-onnx（内嵌）：未配置目录 → ModelStore 归一化/默认模型路径逻辑
+    func testSherpaOnnxModelResolution() throws {
+        // normalizeModelOnnx：目录内唯一 .onnx 软链为 model.onnx
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sherpa_norm_\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        var opts = SynthOptions()
-        opts.sherpaOnnxModelDir = ""
-        do {
-            _ = try await SherpaOnnxTTSEngine().synthesize(
-                text: "你好", cacheKey: "so-missing-2", cacheDir: dir, options: opts)
-            XCTFail("应抛模型目录缺失错误")
-        } catch let e as EngineError {
-            guard case .engineFailure(let msg) = e else { return XCTFail("错误类型不对：\(e)") }
-            XCTAssertTrue(msg.contains("模型目录"), "提示应含模型目录：\(msg)")
-        }
+        try "fake".write(to: dir.appendingPathComponent("theresa.onnx"), atomically: true, encoding: .utf8)
+        ModelStore.normalizeModelOnnx(at: dir.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.path + "/model.onnx"))
+        // 多个 onnx 不歧义处理
+        try "fake".write(to: dir.appendingPathComponent("other.onnx"), atomically: true, encoding: .utf8)
+        try? FileManager.default.removeItem(atPath: dir.appendingPathComponent("model.onnx").path)
+        ModelStore.normalizeModelOnnx(at: dir.path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path + "/model.onnx"))
     }
 
     /// SynthOptions 新字段向后兼容：老 JSON（无 localVoice/sherpaOnnxModelDir）解码不掉默认值

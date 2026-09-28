@@ -1,11 +1,11 @@
 import Foundation
 import Ytb2ZHCore
 
-// MARK: - yt-dlp 下载引擎（sidecar：捆绑的 yt-dlp_macos 二进制）
+// MARK: - yt-dlp 下载引擎（备用：按需下载的官方独立二进制，默认不随 App 分发）
 
 public final class YtDlpDownloadEngine: DownloadEngine, @unchecked Sendable {
     public let descriptor = EngineDescriptor(
-        "yt-dlp", "yt-dlp（捆绑）", "官方 sidecar 二进制，带自动定位与代理解析")
+        "yt-dlp", "yt-dlp（备用）", "内置提取失败时按需下载的官方二进制；也可在引擎列表显式选用")
 
     private let runner = ProcessRunner()
 
@@ -15,7 +15,7 @@ public final class YtDlpDownloadEngine: DownloadEngine, @unchecked Sendable {
                          progress: @Sendable @escaping (Double, String?) -> Void) async throws -> URL {
         let fm = FileManager.default
         try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-        // 断点续跑：目标已是完整文件则跳过
+        // 断点续跑：目标已是完整文件则跳过（缓存命中时无需准备二进制）
         if let size = fileSize(dest.path), size > 1_000_000 { return dest }
         // yt-dlp 可能落到其它扩展名（source.webm/mkv…）：dest 缺失但同前缀产物已存在也直接复用，
         // 避免管线二次调用时对同一视频完整重下
@@ -26,6 +26,8 @@ public final class YtDlpDownloadEngine: DownloadEngine, @unchecked Sendable {
                 .filter { $0.lastPathComponent.hasPrefix("\(base).") && $0.pathExtension != "json" }
             if let any = siblings.first(where: { (fileSize($0.path) ?? 0) > 1_000_000 }) { return any }
         }
+        // 真正需要下载时才确保二进制就绪（未安装则按需下载）
+        _ = try await YtDlpInstaller.ensureInstalled(proxy: options.proxy)
 
         let outTpl = dest.deletingLastPathComponent()
             .appendingPathComponent("source.%(ext)s").path

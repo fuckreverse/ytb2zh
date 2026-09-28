@@ -88,6 +88,26 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(p.compose.subtitleMaxLength, 75)
         XCTAssertEqual(p.synth.edgeVoice, "zh-CN-YunxiNeural")
         XCTAssertNil(p.translate.terminology)
+        XCTAssertEqual(p.blurb, "", "旧模板无 blurb 字段应默认为空串")
+    }
+
+    func testBlurbRoundTrip() throws {
+        let data = try JSONEncoder().encode(Profile.keepBGM)
+        let p = try JSONDecoder().decode(Profile.self, from: data)
+        XCTAssertEqual(p.blurb, Profile.keepBGM.blurb)
+    }
+
+    func testIsEqualIgnoringName() {
+        // 同模板改个名字：内容相等
+        XCTAssertTrue(Profile.tightSync.isEqualIgnoringName(to: Profile.tightSync.derived(named: "改名")))
+        // 基于模板改了参数：内容不等
+        var tweaked = Profile.balanced
+        tweaked.schedule.driftCap = 2.4
+        XCTAssertFalse(tweaked.isEqualIgnoringName(to: Profile.balanced))
+        // 改了 blurb 不算内容变化
+        var reblurb = Profile.balanced
+        reblurb.blurb = "新描述"
+        XCTAssertTrue(reblurb.isEqualIgnoringName(to: Profile.balanced))
     }
 
     func testTerminologyRoundTripNotPersisted() throws {

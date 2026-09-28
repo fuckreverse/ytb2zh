@@ -1,4 +1,5 @@
 import XCTest
+import Videx
 @testable import Ytb2ZHEngines
 
 final class VideoCatalogServiceTests: XCTestCase {
@@ -107,6 +108,107 @@ extension VideoCatalogServiceTests {
         // 无 thumbnail 字段时兜底 hqdefault
         XCTAssertEqual(VideoCatalogService.parseEntry(["id": "abcdefghijk", "title": "t"])?.thumbnail,
                        "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg")
+    }
+}
+
+// MARK: - Videx 原生搜索映射（InnerTubeListItem → CatalogVideo）
+
+extension VideoCatalogServiceTests {
+    func testCatalogVideoMapping() {
+        let item = InnerTubeListItem(
+            kind: .video, id: "dQw4w9WgXcQ", title: "Never Gonna Give You Up",
+            thumbnailURL: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+            url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            channelTitle: "Rick Astley",
+            viewCount: 1_500_000_000, lengthSeconds: 212)
+        let v = VideoCatalogService.catalogVideo(item)
+        XCTAssertEqual(v.id, "dQw4w9WgXcQ")
+        XCTAssertEqual(v.title, "Never Gonna Give You Up")
+        XCTAssertEqual(v.url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        XCTAssertEqual(v.duration, 212)
+        XCTAssertEqual(v.channel, "Rick Astley")
+        XCTAssertEqual(v.viewCount, 1_500_000_000)
+
+        // 空标题/无缩略图兜底
+        let bare = InnerTubeListItem(kind: .video, id: "abcdefghijk", title: "",
+                                     url: "https://www.youtube.com/watch?v=abcdefghijk")
+        let mapped = VideoCatalogService.catalogVideo(bare)
+        XCTAssertEqual(mapped.title, "（无标题）")
+        XCTAssertEqual(mapped.thumbnail, "https://i.ytimg.com/vi/abcdefghijk/hqdefault.jpg")
+        XCTAssertEqual(mapped.duration, 0)
+    }
+}
+
+// MARK: - searchPage 端到端真机验证（可选，默认跳过）
+
+extension VideoCatalogServiceTests {
+
+    private var liveEnabled: Bool {
+        ProcessInfo.processInfo.environment["CATALOG_LIVE"] == "1"
+    }
+
+    private var proxy: String {
+        ProcessInfo.processInfo.environment["CATALOG_PROXY"] ?? ""
+    }
+
+    /// CATALOG_LIVE=1 CATALOG_PROXY=http://127.0.0.1:7890 swift test --filter testSearchPageLive
+    func testSearchPageLiveKeywordPagination() async throws {
+        guard liveEnabled else { throw XCTSkip("设置 CATALOG_LIVE=1 以启用端到端真机测试") }
+        let service = VideoCatalogService()
+        let proxy = self.proxy
+        let first = try await Task.detached {
+            try service.searchPage("lo fi hip hop", proxy: proxy)
+        }.value
+        XCTAssertFalse(first.videos.isEmpty, "关键词搜索应有视频")
+        XCTAssertTrue(first.hasMore, "关键词搜索应可翻页")
+        for v in first.videos.prefix(5) {
+            XCTAssertEqual(v.id.count, 11)
+            XCTAssertNotNil(v.thumbnail)
+            XCTAssertFalse(v.title.isEmpty)
+        }
+        let firstIDs = Set(first.videos.map(\.id))
+        let second = try await Task.detached {
+            try service.searchPage("lo fi hip hop", offset: first.videos.count, proxy: proxy)
+        }.value
+        XCTAssertFalse(second.videos.isEmpty, "第二页应有视频")
+        let overlap = second.videos.filter { firstIDs.contains($0.id) }
+        XCTAssertTrue(overlap.count < second.videos.count / 2, "翻页重复度不应过高")
+        print("关键词：首页 \(first.videos.count) 条，第二页 \(second.videos.count) 条，重复 \(overlap.count) 条")
+    }
+
+    func testSearchPageLiveChannelAndPlaylist() async throws {
+        guard liveEnabled else { throw XCTSkip("设置 CATALOG_LIVE=1 以启用端到端真机测试") }
+        let service = VideoCatalogService()
+        let proxy = self.proxy
+        let channel = try await Task.detached {
+            try service.searchPage("https://www.youtube.com/@MrBeast/videos", proxy: proxy)
+        }.value
+        XCTAssertEqual(channel.title, "MrBeast", "频道页应取到频道名")
+        XCTAssertGreaterThan(channel.videos.count, 10, "频道 Videos 页签应有大量视频")
+        XCTAssertNotNil(channel.videos.first?.duration, "lockup 应解析出时长")
+
+        let playlist = try await Task.detached {
+            try service.searchPage(
+                "https://www.youtube.com/playlist?list=PLbpi6ZahtOH6Blw3RGYpWkSByi_T7Rygb",
+                proxy: proxy)
+        }.value
+        XCTAssertFalse(playlist.videos.isEmpty, "播放列表应有视频")
+        XCTAssertNotNil(playlist.title, "播放列表应取到标题")
+        print("频道：\(channel.videos.count) 条（\(channel.title ?? "-")）；列表：\(playlist.videos.count) 条（\(playlist.title ?? "-")）")
+    }
+
+    func testSearchPageLiveSingleVideo() async throws {
+        guard liveEnabled else { throw XCTSkip("设置 CATALOG_LIVE=1 以启用端到端真机测试") }
+        let service = VideoCatalogService()
+        let proxy = self.proxy
+        let page = try await Task.detached {
+            try service.searchPage("https://www.youtube.com/watch?v=dQw4w9WgXcQ", proxy: proxy)
+        }.value
+        XCTAssertEqual(page.videos.count, 1, "单视频链接应返回一条")
+        XCTAssertEqual(page.videos.first?.id, "dQw4w9WgXcQ")
+        XCTAssertFalse(page.videos.first?.title.isEmpty ?? true, "单视频应有标题")
+        XCTAssertFalse(page.hasMore, "单视频无翻页")
+        print("单视频：\(page.videos.first?.title ?? "-")")
     }
 }
 

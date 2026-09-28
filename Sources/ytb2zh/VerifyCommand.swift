@@ -84,7 +84,7 @@ enum VerifyCommand {
 
         print("""
         ✅ 全部引擎自检通过：
-           yt-dlp: \(SidecarPaths.ytDlp)
+           yt-dlp: \(YtDlpInstaller.availablePath.map { "\($0)（已就绪）" } ?? "未安装（内置提取失败时按需下载）")
            whisper-cli: \(SidecarPaths.whisperCli)
            ffmpeg: \(SidecarPaths.ffmpeg)
         """)

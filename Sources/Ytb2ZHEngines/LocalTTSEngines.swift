@@ -1,4 +1,5 @@
 import Foundation
+import CSherpaOnnx
 import Ytb2ZHCore
 
 // MARK: - 本地 TTS 引擎（零网络依赖，纯离线）
@@ -65,14 +66,19 @@ public struct LocalSayTTSEngine: SpeechSynthesisEngine {
     }
 }
 
-// MARK: Sherpa-Onnx 离线 TTS 引擎
+// MARK: Sherpa-Onnx 离线 TTS 引擎（内嵌 v1.13.8 C API，进程内推理）
+// 引擎 id 保持 "sherpa-onnx"：旧 profile 无需改动；二进制不再需要，模型目录缺失时自动下载默认中文模型。
 
 public struct SherpaOnnxTTSEngine: SpeechSynthesisEngine {
     public let descriptor = EngineDescriptor(
-        "sherpa-onnx", "Sherpa-Onnx 离线 TTS", "需下载二进制 + 模型，音质优于 say")
+        "sherpa-onnx", "Sherpa-Onnx 离线 TTS（内嵌）",
+        "进程内 vits 推理，零外部依赖；模型缺失自动下载（默认 theresa 中文女声约 170MB）")
     public var supportsRateControl: Bool { false }
 
     public init() {}
+
+    /// 已加载模型缓存（模型加载重，按目录缓存进程级单例；进程生命周期内不释放）
+    private static let loaded = Mutex<[String: OpaquePointer]>([:])
 
     public func synthesize(text: String, cacheKey: String, cacheDir: URL,
                            options: SynthOptions) async throws -> (url: URL, duration: Double) {
@@ -87,27 +93,31 @@ public struct SherpaOnnxTTSEngine: SpeechSynthesisEngine {
             return (mp3, cached)
         }
 
-        // 1) 配置校验先行（未配置模型目录时优先报配置错，而非二进制缺失）
-        if options.sherpaOnnxModelDir.trimmingCharacters(in: .whitespaces).isEmpty {
-            throw EngineError.engineFailure(
-                "未配置 Sherpa-Onnx 模型目录。请在「应用设置 → 模型分配」选择模型，或手动指定含 model.onnx 的目录路径。")
-        }
-        // 2) 定位 sherpa-onnx 二进制
-        let binPath = try resolveBinary()
-        // 3) 定位模型目录（展开 ~ 并校验必要文件）
-        let modelDir = try resolveModelDir(options.sherpaOnnxModelDir)
+        // 1) 模型目录：显式配置优先（缺失报错），未配置自动下载默认模型
+        let modelDir = try await ModelStore.ensureSherpaModel(configured: options.sherpaOnnxModelDir)
 
-        // 4) 合成到临时 wav
+        // 2) 取/建模型实例（重推理走专用线程）
+        let tts = try await Self.ttsInstance(modelDir: modelDir)
+
+        // 3) 合成 → wav（C 调用收进同步 helper，调度闭包只捕获 Sendable 值）
         let wav = cacheDir.appendingPathComponent("\(cacheKey).wav")
         try? fm.removeItem(at: wav)
-
-        let r = try runSherpaOnnx(binPath: binPath, modelDir: modelDir, text: text, output: wav)
-        guard r == 0, fm.fileExists(atPath: wav.path) else {
-            throw EngineError.engineFailure(
-                "Sherpa-Onnx 合成失败（exit=\(r)）。请检查模型目录是否完整（需含 model.onnx、tokens.txt、dict/）")
+        nonisolated(unsafe) let ttsHandle = tts
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try Self.generateSync(tts: ttsHandle, text: text, wav: wav)
+                    cont.resume()
+                } catch {
+                    cont.resume(throwing: error)
+                }
+            }
+        }
+        guard fm.fileExists(atPath: wav.path) else {
+            throw EngineError.engineFailure("Sherpa-Onnx 未产出音频")
         }
 
-        // 5) ffmpeg 转 mp3
+        // 4) ffmpeg 转 mp3（与下游配音轨格式一致）
         try runFFmpeg(["-y", "-v", "error", "-i", wav.path,
                        "-codec:a", "libmp3lame", "-q:a", "4", mp3.path])
         try? fm.removeItem(at: wav)
@@ -120,65 +130,60 @@ public struct SherpaOnnxTTSEngine: SpeechSynthesisEngine {
         return (mp3, dur)
     }
 
-    // MARK: - 私有
-
-    /// 查找 sherpa-onnx-offline-tts 二进制：环境变量目录 → homebrew → 常见下载位置
-    private func resolveBinary() throws -> String {
-        let fm = FileManager.default
-        // 常见位置
-        let candidates = [
-            NSHomeDirectory() + "/sherpa-onnx/bin/sherpa-onnx-offline-tts",
-            NSHomeDirectory() + "/sherpa-onnx-offline-tts",
-            "/opt/homebrew/bin/sherpa-onnx-offline-tts",
-            "/usr/local/bin/sherpa-onnx-offline-tts",
-        ]
-        for c in candidates where fm.isExecutableFile(atPath: c) {
-            return c
+    /// 同步合成（vits C API 调用；运行在专用调度线程）
+    nonisolated private static func generateSync(tts: OpaquePointer, text: String, wav: URL) throws {
+        // strdup 固定 C 字符串（utf8String 缓冲随临时对象释放，同调内使用虽安全但统一走 strdup）
+        guard let audio = SherpaOnnxOfflineTtsGenerate(tts, UnsafePointer(strdup(text)), 0, 1.0) else {
+            throw EngineError.engineFailure(
+                "Sherpa-Onnx 合成失败。请检查模型目录是否完整（model.onnx/tokens.txt/lexicon.txt/dict/）")
         }
-        // which
-        if let p = SidecarPaths.which("sherpa-onnx-offline-tts") {
-            return p
+        defer { SherpaOnnxDestroyOfflineTtsGeneratedAudio(audio) }
+        let a = audio.pointee
+        let ok = SherpaOnnxWriteWave(a.samples, a.n, a.sample_rate,
+                                     UnsafePointer(strdup(wav.path)))
+        guard ok == 1 else {  // C API 约定：1 成功 / 0 失败
+            throw EngineError.engineFailure("Sherpa-Onnx 写 wav 失败：\(wav.path)")
         }
-        throw EngineError.engineFailure(
-            "未找到 sherpa-onnx-offline-tts 二进制。请从 https://github.com/k2-fsa/sherpa-onnx/releases 下载对应模型二进制，解压到 ~/sherpa-onnx/bin/ 或通过 homebrew 安装。")
     }
 
-    /// 解析模型目录（支持 ~ 展开）；前置空值校验在 synthesize 里，这里只做文件级校验
-    private func resolveModelDir(_ configured: String) throws -> String {
-        let path = configured.trimmingCharacters(in: .whitespaces)
-        let expanded = NSString(string: path).expandingTildeInPath
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: expanded, isDirectory: &isDir), isDir.boolValue else {
-            throw EngineError.engineFailure("Sherpa-Onnx 模型目录不存在：\(expanded)")
-        }
-        // 校验必要文件
-        let modelFile = expanded + "/model.onnx"
-        let tokensFile = expanded + "/tokens.txt"
-        guard fm.fileExists(atPath: modelFile) else {
-            throw EngineError.engineFailure("模型目录缺少 model.onnx：\(expanded)")
-        }
-        guard fm.fileExists(atPath: tokensFile) else {
-            throw EngineError.engineFailure("模型目录缺少 tokens.txt：\(expanded)")
-        }
-        return expanded
-    }
+    /// 取缓存的 SherpaOnnxOfflineTts 实例（无则加载）
+    private static func ttsInstance(modelDir: String) async throws -> OpaquePointer {
+        if let cached = loaded.wrapped[modelDir] { return cached }
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<OpaquePointer, Error>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                // 关键：C 字符串生命周期——(s as NSString).utf8String 的缓冲随临时 NSString 释放而悬垂，
+                // 而 SherpaOnnxCreateOfflineTts 在同一次调用内读取后不再持有，安全做法是 strdup 固定住。
+                var config = SherpaOnnxOfflineTtsConfig()
+                // 注意：data_dir 仅用于 espeak-ng-data（非中文模型）；中文 lexicon 型模型不要设，
+                // 塞 jieba dict 目录会初始化失败（旧 sidecar 的 --vits-data-dir 用法已废弃）
+                let fm = FileManager.default
+                if fm.fileExists(atPath: modelDir + "/model.onnx") {
+                    config.model.vits.model = UnsafePointer(strdup(modelDir + "/model.onnx"))
+                }
+                if fm.fileExists(atPath: modelDir + "/tokens.txt") {
+                    config.model.vits.tokens = UnsafePointer(strdup(modelDir + "/tokens.txt"))
+                }
+                if fm.fileExists(atPath: modelDir + "/lexicon.txt") {
+                    config.model.vits.lexicon = UnsafePointer(strdup(modelDir + "/lexicon.txt"))
+                }
+                config.model.vits.noise_scale = 0.667
+                config.model.vits.noise_scale_w = 0.8
+                config.model.vits.length_scale = 1.0
+                config.model.num_threads = Int32(ProcessInfo.processInfo.activeProcessorCount)
+                config.model.provider = UnsafePointer(strdup("cpu"))
+                config.model.debug = 0
+                // 文本正则化规则（数字/日期/电话号码读音），目录内存在才拼
+                let fsts = ModelStore.sherpaRuleFsts(at: modelDir)
+                if !fsts.isEmpty { config.rule_fsts = UnsafePointer(strdup(fsts)) }
 
-    /// 调用 sherpa-onnx-offline-tts 二进制
-    /// 用法：sherpa-onnx-offline-tts --vits-model=<dir>/model.onnx --vits-tokens=<dir>/tokens.txt
-    ///       --vits-data-dir=<dir>/dict --output-filename=<wav> "text"
-    private func runSherpaOnnx(binPath: String, modelDir: String, text: String, output: URL) throws -> Int32 {
-        let dictDir = modelDir + "/dict"
-        let args = [
-            "--vits-model", modelDir + "/model.onnx",
-            "--vits-tokens", modelDir + "/tokens.txt",
-            "--vits-data-dir", dictDir,
-            "--vits-length-scale", "1.0",
-            "--output-filename", output.path,
-            text,
-        ]
-        let runner = ProcessRunner()
-        let r = try runner.run(binPath, args)
-        return r.code
+                guard let tts = SherpaOnnxCreateOfflineTts(&config) else {
+                    cont.resume(throwing: EngineError.engineFailure(
+                        "Sherpa-Onnx 模型加载失败：\(modelDir)（缺 model.onnx 或文件损坏）"))
+                    return
+                }
+                loaded.with { $0[modelDir] = tts }
+                cont.resume(returning: tts)
+            }
+        }
     }
 }

@@ -47,11 +47,22 @@ public struct VideoDetails: Codable, Sendable, Hashable {
 public struct VideoInfoService: Sendable {
     public init() {}
 
-    /// 拉取单个视频完整元数据（yt-dlp -J，不带 --flat-playlist）
+    /// 拉取单个视频完整元数据：Videx 原生优先（YouTube/B站/抖音/TikTok），
+    /// 内置提取失败时才按需下载 yt-dlp 并回退 -J。
     public func fetch(_ url: String, proxy: String = "") throws -> VideoDetails {
         let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard u.hasPrefix("http") else {
             throw EngineError.engineFailure("视频详情：非法链接 \(u.prefix(60))")
+        }
+        if VidexBridge.canHandle(u) {
+            do {
+                let info = try VidexBridge.extractSync(u, proxy: proxy)
+                return VidexBridge.toDetails(info, url: u)
+            } catch {
+                // 内置提取失败（风控/私有视频）→ 按需准备 yt-dlp 后回退；
+                // 下载失败时抛出安装错误（含 actionable 提示），不掩盖原生失败原因
+                _ = try YtDlpInstaller.ensureInstalledSync(proxy: proxy)
+            }
         }
         let res = try ProcessRunner().runWithTimeout(60, SidecarPaths.ytDlp, Self.infoArgs(url: u, proxy: proxy))
         guard res.code == 0, !res.stdout.isEmpty else {
@@ -62,6 +73,11 @@ public struct VideoInfoService: Sendable {
             throw EngineError.engineFailure("视频详情解析失败")
         }
         return d
+    }
+
+    /// yt-dlp 二进制当前是否已就绪（不发网络请求；按需安装见 YtDlpInstaller）。
+    static var ytDlpAvailable: Bool {
+        YtDlpInstaller.availablePath != nil
     }
 
     /// yt-dlp 参数构造（纯函数，供测试）

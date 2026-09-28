@@ -342,6 +342,8 @@ public struct ComposeOptions: Codable, Hashable, Sendable {
 
 public struct Profile: Codable, Hashable, Sendable {
     public var name: String
+    /// 一句话描述（内置模板说明适用场景；用户另存时随参数一起保存）
+    public var blurb: String
     /// 每步选用的引擎 id（在 EngineRegistry 中解析）
     public var engines: [String: String]   // StepID.rawValue -> engine id
     public var download: DownloadOptions
@@ -356,7 +358,7 @@ public struct Profile: Codable, Hashable, Sendable {
 
     /// 默认引擎装配（九步；可选步默认关闭 = none）
     public static let defaultEngines: [String: String] = [
-        StepID.download.rawValue: "yt-dlp",
+        StepID.download.rawValue: "auto",
         StepID.separate.rawValue: "none",
         StepID.transcribe.rawValue: "whisper-cpp",
         StepID.segment.rawValue: "punct",
@@ -368,6 +370,7 @@ public struct Profile: Codable, Hashable, Sendable {
     ]
 
     public init(name: String = "自定义",
+                blurb: String = "",
                 engines: [String: String] = Profile.defaultEngines,
                 download: DownloadOptions = .init(),
                 separate: SeparationOptions = .init(),
@@ -378,7 +381,7 @@ public struct Profile: Codable, Hashable, Sendable {
                 synth: SynthOptions = .init(),
                 schedule: ScheduleOptions = .init(),
                 compose: ComposeOptions = .init()) {
-        self.name = name; self.engines = engines
+        self.name = name; self.blurb = blurb; self.engines = engines
         self.download = download; self.separate = separate
         self.transcribe = transcribe; self.segmentation = segmentation
         self.terminology = terminology; self.translate = translate
@@ -387,7 +390,7 @@ public struct Profile: Codable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, engines
+        case name, blurb, engines
         case download, separate, transcribe, segmentation, terminology
         case translate, synth, schedule, compose
     }
@@ -397,6 +400,7 @@ public struct Profile: Codable, Hashable, Sendable {
         let d = Profile()
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? d.name
+        blurb = try c.decodeIfPresent(String.self, forKey: .blurb) ?? ""
         let storedEngines = try c.decodeIfPresent([String: String].self, forKey: .engines) ?? [:]
         engines = Profile.defaultEngines.merging(storedEngines) { _, new in new }
         download = try c.decodeIfPresent(DownloadOptions.self, forKey: .download) ?? d.download
@@ -412,10 +416,10 @@ public struct Profile: Codable, Hashable, Sendable {
 
     // MARK: 内置模板
 
-    public static let balanced = Profile(name: "均衡（默认）")
+    public static let balanced = Profile(name: "均衡（默认）", blurb: "通用场景首选：口语解说风格 + 百炼配音 + 自动对齐，不确定就用它")
 
     public static let tightSync: Profile = {
-        var p = Profile(name: "精准对齐")
+        var p = Profile(name: "精准对齐", blurb: "收紧音画同步（配音最多领先 0.8s、停顿更短），适合口播、教程、访谈类视频")
         p.schedule.driftCap = 0.8
         p.schedule.pauseMax = 0.9
         p.schedule.slowMax = 1.08
@@ -423,7 +427,7 @@ public struct Profile: Codable, Hashable, Sendable {
     }()
 
     public static let relaxed: Profile = {
-        var p = Profile(name: "从容解说")
+        var p = Profile(name: "从容解说", blurb: "放宽同步窗口 + 解说文风，配音更从容自然，适合风景、纪录片等长视频")
         p.schedule.driftCap = 2.0
         p.schedule.pauseMax = 1.6
         p.schedule.slowMax = 1.18
@@ -432,7 +436,7 @@ public struct Profile: Codable, Hashable, Sendable {
     }()
 
     public static let subtitlesOnly: Profile = {
-        var p = Profile(name: "仅字幕（不配音）")
+        var p = Profile(name: "仅字幕（不配音）", blurb: "跳过配音与对齐，只要中文字幕，速度最快、成本最低")
         p.engines[StepID.synthesize.rawValue] = "none"
         p.engines[StepID.schedule.rawValue] = "none"
         p.compose.keepOriginalAudio = true
@@ -441,7 +445,7 @@ public struct Profile: Codable, Hashable, Sendable {
 
     /// 研究级：术语表 + 三步翻译（直译→反思→意译），术语一致性最佳
     public static let studied: Profile = {
-        var p = Profile(name: "研究级（术语+三步翻译）")
+        var p = Profile(name: "研究级（术语+三步翻译）", blurb: "先提取术语表，再直译→反思→意译三步翻译，专业术语一致性最好，耗时更长")
         p.engines[StepID.summarize.rawValue] = "gateway-terms"
         p.translate.useTerminology = true
         p.translate.quality = .threePass
@@ -450,7 +454,7 @@ public struct Profile: Codable, Hashable, Sendable {
 
     /// 保留 BGM：人声分离后只换人声，伴奏重新混入
     public static let keepBGM: Profile = {
-        var p = Profile(name: "保留 BGM（人声分离）")
+        var p = Profile(name: "保留 BGM（人声分离）", blurb: "demucs 分离人声后只替换人声，背景音乐原样保留，适合音乐/综艺类视频")
         p.engines[StepID.separate.rawValue] = "demucs"
         p.compose.keepBGM = true
         return p
@@ -463,6 +467,14 @@ public struct Profile: Codable, Hashable, Sendable {
         var p = self
         p.name = newName
         return p
+    }
+
+    /// 忽略 name/blurb 的内容比较：判断用户是否在模板基础上改过参数
+    /// （用于切模板前的“未保存修改”确认，避免静默丢弃用户调整）
+    public func isEqualIgnoringName(to other: Profile) -> Bool {
+        var a = self; a.name = ""; a.blurb = ""
+        var b = other; b.name = ""; b.blurb = ""
+        return a == b
     }
 }
 
