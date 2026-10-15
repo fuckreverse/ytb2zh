@@ -34,6 +34,20 @@ jobs:
           key: native-macos-arm64-${{ hashFiles('Scripts/bootstrap-deps.sh') }}
       - name: Bootstrap native dependencies
         run: bash Scripts/bootstrap-deps.sh
+      - name: Install media tools
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        run: |
+          # Subtitle tests require libass, which the minimal ffmpeg formula omits.
+          brew install ffmpeg-full
+          media_bin="$(brew --prefix ffmpeg-full)/bin"
+          echo "$media_bin" >> "$GITHUB_PATH"
+          export PATH="$media_bin:$PATH"
+          ffmpeg -version
+          ffprobe -version
+          ffmpeg -hide_banner -filters > "$RUNNER_TEMP/ffmpeg-filters.txt"
+          grep -Eq '[[:space:]]subtitles[[:space:]]' "$RUNNER_TEMP/ffmpeg-filters.txt"
       - name: Test Videx
         run: swift test --package-path Videx
       - name: Test application
