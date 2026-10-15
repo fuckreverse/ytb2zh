@@ -27,7 +27,8 @@ public enum EngineAssembly {
                 SherpaOnnxTTSEngine().descriptor, NullSynthEngine().descriptor]),
             .init(step: .schedule, descriptors: [
                 DriftSchedulerEngine().descriptor, NullSchedulerEngine().descriptor]),
-            .init(step: .compose, descriptors: [FFmpegComposeEngine().descriptor]),
+            .init(step: .compose, descriptors: [
+                FFmpegComposeEngine().descriptor, SidecarComposeEngine().descriptor]),
         ])
     }
 
@@ -70,11 +71,17 @@ public enum EngineAssembly {
             }
         }()
         let scheduler: any SchedulerEngine = id(.schedule, "drift") == "none" ? NullSchedulerEngine() : DriftSchedulerEngine()
+        let composer: any CompositionEngine = {
+            switch id(.compose, "ffmpeg") {
+            case "sidecar": SidecarComposeEngine()   // 旁挂 SRT，无烧录，视频不重编码
+            default: FFmpegComposeEngine()
+            }
+        }()
 
         return EngineSet(
             downloader: downloader, transcriber: transcriber, segmenter: segmenter,
             translator: translator, synthesizer: synthesizer, scheduler: scheduler,
-            composer: FFmpegComposeEngine(),
+            composer: composer,
             separator: separator, terminologist: terminologist)
     }
 }
