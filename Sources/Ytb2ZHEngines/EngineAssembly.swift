@@ -50,9 +50,10 @@ public enum EngineAssembly {
         let separator: (any VocalSeparationEngine)? = id(.separate, "none") == "demucs" ? NativeDemucsSeparator() : nil
         let transcriber: any TranscribeEngine = {
             switch id(.transcribe, "whisper-native") {
-            case "whisper-cpp": WhisperCliEngine()   // 旧 sidecar，向后兼容
+            case "whisper-cpp": WhisperCliEngine()      // 旧 sidecar，向后兼容
             case "srt": SrtTranscribeEngine()
-            default: NativeWhisperEngine()            // 新默认：内嵌 whisper.cpp
+            case "whisper-native": NativeWhisperEngine() // 默认：内嵌 whisper.cpp，零外部二进制
+            default: NativeWhisperEngine()
             }
         }()
         let segmenter: any SegmentationEngine = id(.segment, "punct") == "llm-seg" ? LLMSegmentationEngine() : PunctSegmentationEngine()

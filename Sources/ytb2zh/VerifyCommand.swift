@@ -24,7 +24,7 @@ enum VerifyCommand {
         try runFFmpeg(["-y", "-v", "error", "-ss", "60", "-t", "30", "-i", media.path,
                        "-c", "copy", clip.path])
 
-        // ② whisper 转录
+        // ② whisper 转录（sidecar，向后兼容路径）
         print("② WhisperCliEngine 转录 30s…")
         let transcriber = WhisperCliEngine()
         let words = try await transcriber.transcribe(video: clip, workDir: work,
@@ -33,6 +33,15 @@ enum VerifyCommand {
         }
         print("   ✓ \(words.count) 词，样例：\(words.prefix(8).map(\.text).joined())")
         guard words.count > 20 else { throw EngineError.engineFailure("转录词数异常") }
+
+        // ②b 内嵌 whisper 转录（默认引擎，零外部二进制）
+        print("②b NativeWhisperEngine 转录 30s…")
+        let wordsNative = try await NativeWhisperEngine().transcribe(
+            video: clip, workDir: work, options: TranscribeOptions()) { p, m in
+            if let m { print("   [\(Int(p * 100))%] \(m)") }
+        }
+        print("   ✓ \(wordsNative.count) 词，样例：\(wordsNative.prefix(8).map(\.text).joined())")
+        guard wordsNative.count > 20 else { throw EngineError.engineFailure("内嵌转录词数异常") }
 
         // ③ 切分
         print("③ PunctSegmentationEngine 切分…")
@@ -85,7 +94,8 @@ enum VerifyCommand {
         print("""
         ✅ 全部引擎自检通过：
            yt-dlp: \(YtDlpInstaller.availablePath.map { "\($0)（已就绪）" } ?? "未安装（内置提取失败时按需下载）")
-           whisper-cli: \(SidecarPaths.whisperCli)
+           whisper（内嵌，默认）: 模型 \(ModelStore.whisperDefault)，零外部二进制
+           whisper-cli（兼容）: \(SidecarPaths.whisperCli)
            ffmpeg: \(SidecarPaths.ffmpeg)
         """)
     }

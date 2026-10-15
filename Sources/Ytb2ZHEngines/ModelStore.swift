@@ -41,6 +41,18 @@ public enum ModelStore {
 
     // MARK: - whisper
 
+    /// 把配置值解析为远端模型名（纯函数，无 I/O）：
+    /// 空 / 旧版默认路径（vid2zh 原型目录，模板历史默认值）→ 默认模型；
+    /// 已知模型名（取 lastPathComponent，带不带 .bin 后缀均可）→ 自身；否则 nil。
+    public static func whisperRemoteName(for configured: String) -> String? {
+        let trimmed = configured.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || trimmed.contains("/vid2zh/") {
+            return whisperModels[whisperDefault + ".bin"]
+        }
+        let name = (trimmed as NSString).lastPathComponent
+        return whisperModels[name] ?? whisperModels[name + ".bin"]
+    }
+
     /// 解析 whisper 模型路径：存在直接返回；是已知模型名则下载到模型根；
     /// 空或指向默认旧位置（vid2zh）则落到默认模型。
     /// 返回 (绝对路径, 是否发生了下载)
@@ -58,8 +70,8 @@ public enum ModelStore {
             let expanded = NSString(string: trimmed).expandingTildeInPath
             if fm.fileExists(atPath: expanded) { return expanded }
         }
-        // ② 未配置/默认模板旧路径（vid2zh）→ 尝试默认模型（先看本地是否已有）
-        guard let remoteName = whisperModels[trimmed.isEmpty ? (whisperDefault + ".bin") : (trimmed as NSString).lastPathComponent] else {
+        // ② 未配置/旧版默认路径（vid2zh）→ 尝试默认模型（先看本地是否已有）
+        guard let remoteName = whisperRemoteName(for: trimmed) else {
             throw EngineError.engineFailure(
                 "whisper 模型不存在：\(trimmed)。请填写正确路径，或留空以自动下载 \(whisperDefault)（约 142MB）")
         }

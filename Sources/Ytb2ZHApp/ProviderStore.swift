@@ -68,7 +68,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Hashable {
         case .openai: "Base URL 填到 /v1；同一提供商的模型可分别勾选翻译/语音生成等能力"
         case .bailian: "模型名称填 TTS 模型 ID（如 qwen-audio-3.1-tts-flash）"
         case .edge: "模型名称填音色名（如 zh-CN-YunxiNeural）"
-        case .whisperLocal: "模型名称填 ggml 模型文件完整路径（如 ~/vid2zh/models/ggml-medium.en-q5_0.bin）"
+        case .whisperLocal: "模型名称填 ggml 模型文件完整路径，或已知模型名（如 ggml-base.en，缺失自动下载）"
         case .localTTS: "模型名称填「say:音色名」或「sherpa-onnx:模型目录路径」。say 用系统语音（如 say:Tingting）；sherpa-onnx 需从 GitHub 下载模型二进制与模型目录"
         }
     }

@@ -366,7 +366,7 @@ public struct Profile: Codable, Hashable, Sendable {
     public static let defaultEngines: [String: String] = [
         StepID.download.rawValue: "auto",
         StepID.separate.rawValue: "none",
-        StepID.transcribe.rawValue: "whisper-cpp",
+        StepID.transcribe.rawValue: "whisper-native",
         StepID.segment.rawValue: "punct",
         StepID.summarize.rawValue: "none",
         StepID.translate.rawValue: "gateway",

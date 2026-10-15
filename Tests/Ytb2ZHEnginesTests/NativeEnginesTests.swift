@@ -66,9 +66,27 @@ final class NativeEnginesTests: XCTestCase {
         XCTAssertEqual(resolved, tmp.path)
     }
 
+    func testWhisperRemoteNameMapping() {
+        // 空 / 旧版默认路径（vid2zh 原型目录）→ 回落默认模型，保证默认模板开箱即用
+        XCTAssertEqual(ModelStore.whisperRemoteName(for: ""), "ggml-base.en.bin")
+        XCTAssertEqual(ModelStore.whisperRemoteName(for: "~/vid2zh/models/ggml-medium.en-q5_0.bin"),
+                       "ggml-base.en.bin")
+        // 已知模型名（带不带 .bin 均可）→ 自身
+        XCTAssertEqual(ModelStore.whisperRemoteName(for: "ggml-small.en"), "ggml-small.en.bin")
+        XCTAssertEqual(ModelStore.whisperRemoteName(for: "ggml-base.en.bin"), "ggml-base.en.bin")
+        // 未知自定义路径 → nil（由调用方抛出带指引的错误）
+        XCTAssertNil(ModelStore.whisperRemoteName(for: "/tmp/my-model.bin"))
+    }
+
+    func testDefaultProfileAssembles() throws {
+        // 默认模板的引擎 id 必须全部可装配（装配期 validate 拦截不存在的 id）
+        let engines = try EngineAssembly.engineSet(for: Profile.balanced)
+        XCTAssertEqual(engines.transcriber.descriptor.id, "whisper-native")
+    }
+
     // MARK: - 真机冒烟（默认跳过：YTB2ZH_NATIVE_SMOKE=1 启用）
     // sherpa：模型已在 ~/.ytb2zh/models/vits-zh-hf-theresa（首次用时自动下载）
-    // whisper：默认走 ~/vid2zh/models/ggml-medium.en-q5_0.bin（存在即用）
+    // whisper：显式填 vid2zh 旧路径（文件不在则自动下载默认 ggml-base.en）
 
     func testSherpaRealSynthSmoke() async throws {
         guard ProcessInfo.processInfo.environment["YTB2ZH_NATIVE_SMOKE"] == "1" else {

@@ -103,9 +103,15 @@ public final class WhisperCliEngine: TranscribeEngine, @unchecked Sendable {
             throw EngineError.engineFailure("ffmpeg 抽音轨失败：\(String(extract.stderr.suffix(400)))")
         }
 
-        // 2) whisper-cli，-ojf 输出全量 token 时间戳（stderr 打进度，无真实百分比）
+        // 2) 模型就绪（与内嵌引擎同一套解析/自动下载逻辑：显式路径直接用，
+        //    已知模型名/留空/旧版 vid2zh 路径则下载默认 ggml-base.en）
+        progress(0.03, "检查 whisper 模型")
+        let model = try await ModelStore.ensureWhisperModel(configured: options.modelPath) { frac, msg in
+            progress(0.03 + frac * 0.05, msg)
+        }
+
+        // 3) whisper-cli，-ojf 输出全量 token 时间戳（stderr 打进度，无真实百分比）
         progress(0.08, "开始转录（40 分钟视频约 4 分钟）")
-        let model = (options.modelPath as NSString).expandingTildeInPath
         let jsonPath = workDir.appendingPathComponent("audio16k.json")
         tickCounter = 0
         let result = try runner.run(SidecarPaths.whisperCli,
@@ -119,7 +125,7 @@ public final class WhisperCliEngine: TranscribeEngine, @unchecked Sendable {
             throw EngineError.engineFailure("whisper-cli 失败：\(String(result.stderr.suffix(400)))")
         }
 
-        // 3) 解析 token 流
+        // 4) 解析 token 流
         guard let data = try? Data(contentsOf: jsonPath),
               let decoded = try? JSONDecoder().decode(WhisperJSON.self, from: data) else {
             throw EngineError.engineFailure("whisper 输出解析失败：\(jsonPath.path)")

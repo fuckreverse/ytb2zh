@@ -16,6 +16,15 @@ final class CoreTests: XCTestCase {
         }
     }
 
+    func testDefaultTranscribeEngineIsNative() {
+        // 默认模板必须走零依赖的内嵌 whisper（sidecar 版依赖外部 whisper-cli 二进制，
+        // 未安装的机器上默认模板会直接失败）
+        XCTAssertEqual(Profile.defaultEngines[StepID.transcribe.rawValue], "whisper-native")
+        for p in Profile.builtins {
+            XCTAssertEqual(p.engines[StepID.transcribe.rawValue], "whisper-native")
+        }
+    }
+
     func testTemplateStoreRoundTrip() throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("ytb2zh-test-\(UUID().uuidString)", isDirectory: true)
@@ -82,6 +91,7 @@ final class CoreTests: XCTestCase {
         """
         let p = try JSONDecoder().decode(Profile.self, from: Data(legacy.utf8))
         XCTAssertEqual(p.name, "旧模板")
+        XCTAssertEqual(p.engines[StepID.transcribe.rawValue], "whisper-cpp")   // 旧模板显式选择不被新默认覆盖
         XCTAssertEqual(p.engines[StepID.separate.rawValue], "none")   // 缺省步自动补齐
         XCTAssertEqual(p.engines[StepID.summarize.rawValue], "none")
         XCTAssertEqual(p.engines.count, StepID.allCases.count)
