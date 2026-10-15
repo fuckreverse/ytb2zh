@@ -92,6 +92,52 @@ final class WebPoTokenLiveTests: XCTestCase {
         }
     }
 
+    /// Explicit, non-skipping validation: fresh provider, alternative WebPO clients,
+    /// then a complete muxed media download. No token/cookie/media URL is logged.
+    func testPublicVideoProviderClientDownloads() async throws {
+        try XCTSkipUnless(enabled && ProcessInfo.processInfo.environment["POT_LIVE_FULL_DOWNLOAD"] == "1",
+                          "Requires POT_LIVE_FULL_DOWNLOAD=1")
+        let videoID = ProcessInfo.processInfo.environment["POT_VIDEO_ID"] ?? "dQw4w9WgXcQ"
+        let proxy = ProcessInfo.processInfo.environment["POT_PROXY"]
+        let token: HarvestedPoToken
+        if ProcessInfo.processInfo.environment["POT_METHOD"] == "wpc" {
+            token = try await WebKitPotHarvester(videoID: videoID, cookies: CookieJar(), proxy: proxy,
+                useNativeClient: true, log: { _ in }).run()
+        } else {
+            token = try await WebPoTokenProvider.harvest(videoID: videoID, proxy: proxy, timeout: 90, bypassThrottle: true)
+        }
+        let options = ExtractionOptions(proxy: proxy, cookies: token.cookies ?? CookieJar(),
+            youtubePoTokens: token.tokens(for: videoID), youtubeVisitorData: token.visitorData)
+        let context = ExtractionContext.make(options: options, httpFactory: { options in
+            PoTokenSessionHTTPClient(base: URLSessionHTTPClient(proxy: options.proxy), userAgent: token.userAgent ?? "")
+        })
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("videx-provider-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var downloads = 0
+        for client in [InnerTubeClient.mweb, InnerTubeClient.webSafari, InnerTubeClient.web] {
+            do {
+                let info = try await YouTubeExtractor(clientOrder: [client]).extract(
+                    URL(string: "https://www.youtube.com/watch?v=" + videoID)!, context: context)
+                guard let format = info.formats.first(where: { $0.kind == .muxed && $0.protocolType == .https }) else {
+                    print("[provider-validation] \(videoID) \(client.key): no muxed HTTPS format; formats=\(info.formats.count)")
+                    continue
+                }
+                let file = directory.appendingPathComponent(videoID + "-" + client.key + ".mp4")
+                _ = try await NativeMediaDownloader.download(format: format, to: file, http: context.http)
+                let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                XCTAssertGreaterThan(size, 100_000)
+                downloads += 1
+                print("[provider-validation] \(videoID) \(client.key): complete download bytes=\(size) file=\(file.path)")
+            } catch ExtractionError.loginRequired {
+                print("[provider-validation] \(videoID) \(client.key): LOGIN_REQUIRED")
+            } catch {
+                // Do not log errors that can contain signed media URLs.
+                print("[provider-validation] \(videoID) \(client.key): failed type=\(type(of: error))")
+            }
+        }
+        XCTAssertGreaterThan(downloads, 0, "No client completed a native media download; this is a failure, not a skipped bot check")
+    }
+
     /// 生产路径：VidexBridge 的「缓存 POT → 失败 → 收割 → 重试」整链。
     /// 关注的是链路被真实走到（日志可见 visitor/token 注入与收割尝试），
     /// 而非当前网络能否成功。

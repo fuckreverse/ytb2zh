@@ -30,6 +30,11 @@ try {
 
   const pageResp = await fetch('/', { credentials: 'include', signal: AbortSignal.timeout(15000) });
   const html = await pageResp.text();
+  const configMatch = html.match(/ytcfg\.set\(({[\s\S]*?})\);/);
+  if (!configMatch) throw new Error('no attestation ytcfg in homepage html');
+  const attestationConfig = __BgUtils.parseLooseJSON(configMatch[1]);
+  if (!attestationConfig || !attestationConfig.EVENT_ID) throw new Error('no attestation EVENT_ID');
+  out.attestationConfig = attestationConfig;
   const m = html.match(/window\.ytAtN\(\s*({[\s\S]*?})\s*\)/);
   if (!m) throw new Error('no ytAtN challenge in homepage html');
   const att = __BgUtils.parseLooseJSON(m[1]);
@@ -59,11 +64,33 @@ return JSON.stringify(out);
   return visitorData;
 }
 """#
-    static let stage2 = "const resolveSessionBinding = " + sessionBinding + ";\n" + #"""
+    /// BotGuard reads yt.config_.EVENT_ID; it must belong to the challenge's response.
+    /// Restore the watch-page environment after minting, including failure paths.
+    static let attestationEnvironment = #"""
+(config) => {
+  if (!config || !config.EVENT_ID) throw new Error('Missing challenge-matched EVENT_ID');
+  const hadYT = Object.prototype.hasOwnProperty.call(window, 'yt');
+  const previousYT = window.yt;
+  const yt = window.yt || (window.yt = {});
+  const hadConfig = Object.prototype.hasOwnProperty.call(yt, 'config_');
+  const previousConfig = yt.config_;
+  yt.config_ = config;
+  return () => {
+    if (hadConfig) yt.config_ = previousConfig;
+    else delete yt.config_;
+    if (hadYT) window.yt = previousYT;
+    else delete window.yt;
+  };
+}
+"""#
+    static let stage2 = "const resolveSessionBinding = " + sessionBinding + ";\n"
+        + "const installAttestationEnvironment = " + attestationEnvironment + ";\n" + #"""
 // 第二段（页面内）：宿主已下载 interpreter JS，传入后 eval → BotGuard → GenerateIT → 铸 POT
 // 注意：callAsyncJavaScript 的 arguments 按 key 直接注入作用域。
 const out = {};
+let restoreEnvironment;
 try {
+  restoreEnvironment = installAttestationEnvironment(attestationConfig);
   if (!interpreterJS) throw new Error('no interpreterJS provided');
   let evaled = false;
   out.hasTrustedTypes = typeof trustedTypes !== 'undefined';
@@ -118,7 +145,58 @@ try {
 } catch (e) {
   out.ok = false;
   out.error = String((e && e.message) || e);
+} finally {
+  if (restoreEnvironment) restoreEnvironment();
 }
 return JSON.stringify(out);
 """#
+    /// Experimental WPC path, following coletdjnz/yt-dlp-getpot-wpc (MIT).
+    /// No fallback/error/cold-start tokens are requested. Missing native API is an error.
+    static let nativeWebPoClient = "const resolveSessionBinding = " + sessionBinding + ";\n" + #"""
+const out = {};
+try {
+  const visitorData = ytcfg.get('VISITOR_DATA');
+  const dataSyncID = ytcfg.get('DATASYNC_ID') || '';
+  let owner;
+  for (let i = 0; i < 10; i++) {
+    owner = window.top['havuokmhhs-0']?.bevasrs;
+    if (typeof owner?.wpc === 'function') break;
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  if (typeof owner?.wpc !== 'function') throw new Error('Native WebPoClient unavailable');
+  async function mint(binding) {
+    for (let i = 0; i < 10; i++) {
+      try {
+        let timer;
+        let value;
+        try {
+          value = await Promise.race([
+            owner.wpc().then(client => client.mws({c: binding, mc: false, me: false})),
+            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Native WebPoClient timed out')), 15000); })
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+        if (typeof value !== 'string' || !value) throw new Error('Empty native PO Token');
+        return value;
+      } catch (e) {
+        if (!String(e).includes('SDF:notready')) throw e;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    throw new Error('Native WebPoClient not ready');
+  }
+  out.visitorData = visitorData;
+  out.sessionPoToken = await mint(resolveSessionBinding(authenticated, dataSyncID, visitorData));
+  if (videoID) out.videoPoToken = await mint(videoID);
+  out.gvsBoundToVideo = Object.values(ytcfg.get('WEB_PLAYER_CONTEXT_CONFIGS') || {}).some(c =>
+    new URLSearchParams(c.serializedExperimentFlags || '').get('html5_generate_content_po_token') === 'true');
+  out.ok = true;
+} catch (e) {
+  out.ok = false;
+  out.error = String((e && e.message) || e);
+}
+return JSON.stringify(out);
+"""#
+
 }

@@ -134,7 +134,7 @@ public enum WebPoTokenProvider {
 
     public static func scope(videoID: String?, proxy: String?, cookies: CookieJar) -> String {
         let cookieRows = cookies.cookies.map { [$0.domain, $0.path ?? "/", $0.name, $0.value].joined(separator: "\u{0}") }.sorted()
-        let data = ([videoID ?? "", proxy ?? ""] + cookieRows).joined(separator: "\u{1}")
+        let data = (["webpo-event-id-v2", videoID ?? "", proxy ?? ""] + cookieRows).joined(separator: "\u{1}")
         return SHA256.hash(data: Data(data.utf8)).map { String(format: "%02x", $0) }.joined()
     }
     private static func cacheFile(_ scope: String) -> String {
@@ -245,14 +245,16 @@ actor PoTokenHarvestCoordinator {
 @MainActor
 final class WebKitPotHarvester: NSObject {
     private let videoID: String?
+    private let useNativeClient: Bool
     private let cookies: CookieJar
     private let proxy: String?
     private let log: @Sendable (String) -> Void
     /// 常驻变量：WKWebView 必须被强引用直到收割结束
     private var webView: WKWebView?
 
-    init(videoID: String?, cookies: CookieJar, proxy: String?, log: @escaping @Sendable (String) -> Void) {
+    init(videoID: String?, cookies: CookieJar, proxy: String?, useNativeClient: Bool = false, log: @escaping @Sendable (String) -> Void) {
         self.videoID = videoID
+        self.useNativeClient = useNativeClient
         self.cookies = cookies
         self.proxy = proxy
         self.log = log
@@ -302,9 +304,35 @@ final class WebKitPotHarvester: NSObject {
 
         // 1. 加载首页并等待 ytcfg 就绪
         log("[pot] 加载 YouTube 会话页面…")
-        let pageURL = videoID.map { "https://www.youtube.com/watch?v=" + $0 } ?? "https://www.youtube.com/"
+        let pageURL = useNativeClient ? "https://www.youtube.com/?themeRefresh=1"
+            : (videoID.map { "https://www.youtube.com/watch?v=" + $0 } ?? "https://www.youtube.com/")
         webView.load(URLRequest(url: URL(string: pageURL)!))
         try await waitForReady(webView)
+
+        if useNativeClient {
+            let result = try await callJSON(webView, WebPoTokenScripts.nativeWebPoClient,
+                arguments: ["videoID": videoID ?? "", "authenticated": cookies.hasYouTubeAuthentication], stage: "native-wpc")
+            guard result["ok"] as? Bool == true,
+                  let visitor = result["visitorData"] as? String, !visitor.isEmpty,
+                  let sessionToken = result["sessionPoToken"] as? String, !sessionToken.isEmpty else {
+                throw WebPoTokenError.tokenMintFailed(result["error"] as? String ?? "Native WebPoClient failed")
+            }
+            // Native WPC exposes no TTL. Use once immediately; never persist/reuse it.
+            let now = Date()
+            var token = HarvestedPoToken(visitorData: visitor, poToken: sessionToken, harvestedAt: now, expiresAt: now)
+            token.videoID = videoID
+            token.sessionPoToken = sessionToken
+            token.videoPoToken = result["videoPoToken"] as? String
+            token.gvsBoundToVideo = result["gvsBoundToVideo"] as? Bool ?? false
+            token.userAgent = try await webView.evaluateJavaScript("navigator.userAgent") as? String
+            token.cookies = CookieJar(cookies: await config.websiteDataStore.httpCookieStore.allCookies().filter {
+                $0.domain == "youtube.com" || $0.domain.hasSuffix(".youtube.com")
+            }.map {
+                SiteCookie(name: $0.name, value: $0.value, domain: $0.domain, path: $0.path,
+                    expires: $0.expiresDate?.timeIntervalSince1970, secure: $0.isSecure)
+            })
+            return token
+        }
 
         // 2. 页面内取 visitorData + 挑战
         let stage1 = try await callJSON(webView, WebPoTokenScripts.stage1, arguments: [:], stage: "stage1")
@@ -336,6 +364,7 @@ final class WebKitPotHarvester: NSObject {
         log("[pot] 执行 BotGuard 挑战…")
         let stage2 = try await callJSON(webView, WebPoTokenScripts.stage2, arguments: [
             "interpreterJS": interpreterJS,
+            "attestationConfig": stage1["attestationConfig"] as? [String: Any] ?? [:],
             "program": program,
             "globalName": globalName,
             "visitorData": visitorData,

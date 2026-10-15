@@ -54,6 +54,17 @@ final class WebPoTokenTests: XCTestCase {
         XCTAssertEqual(try js.evaluate(code:"",globalStubs:[:],expression:function + "(false, '', 'visitor')"),"visitor")
         XCTAssertThrowsError(try js.evaluate(code:"",globalStubs:[:],expression:function + "(true, '', 'visitor')"))
     }
+    func testAttestationUsesChallengeConfigAndRestoresWatchPage() throws {
+        let js = JavaScriptCoreRuntime()
+        let code = "const install = " + WebPoTokenScripts.attestationEnvironment + ";"
+            + "var window = { yt: { config_: { EVENT_ID: 'watch', VISITOR_DATA: 'original' } } };"
+            + "const original = window.yt.config_;"
+            + "const restore = install({ EVENT_ID: 'challenge' });"
+        XCTAssertEqual(try js.evaluate(code: code, globalStubs: [:], expression: "window.yt.config_.EVENT_ID"), "challenge")
+        XCTAssertEqual(try js.evaluate(code: code + "restore();", globalStubs: [:], expression: "String(window.yt.config_ === original)"), "true")
+        XCTAssertThrowsError(try js.evaluate(code: code, globalStubs: [:], expression: "install({})"))
+        XCTAssertEqual(try js.evaluate(code: code + "delete window.yt; const undo = install({ EVENT_ID: 'new' }); undo();", globalStubs: [:], expression: "String(Object.prototype.hasOwnProperty.call(window, 'yt'))"), "false")
+    }
     func testExpiredTokenIsNotFresh() {
         let now = Date(); var value = token(); value.expiresAt = now
         XCTAssertFalse(value.isFresh(now:now))

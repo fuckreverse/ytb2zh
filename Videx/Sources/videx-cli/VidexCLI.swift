@@ -13,6 +13,7 @@ struct VidexCLI {
         var allowMissingPot = false
         var jar = CookieJar()
         var poTokens: [String: String] = [:]
+        var visitorData: String?
         var downloadMedia = false, expandPlaylist = false, writeSubtitles = false
         var comments = false, chat = false, chatReplay = false, liveFromStart = false
         var directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("videx-downloads")
@@ -78,13 +79,17 @@ struct VidexCLI {
                 do {
                     jar = try CookieJar(netscape: String(contentsOfFile: args[index], encoding: .utf8))
                 } catch { fail("无法读取 Cookie 文件：\(error.localizedDescription)") }
+            case "--visitor-data":
+                index += 1
+                guard index < args.count, !args[index].isEmpty else { fail("--visitor-data 缺少值") }
+                visitorData = args[index]
             case "--po-token":
                 index += 1
                 guard index < args.count else { fail("--po-token 缺少 client.context+token") }
                 let token = args[index].split(separator: "+", maxSplits: 1)
                 guard token.count == 2, !token[1].isEmpty,
-                      token[0].hasSuffix(".gvs") || token[0].hasSuffix(".player") else {
-                    fail("PO Token 格式为 client.gvs+token 或 client.player+token")
+                      token[0].hasSuffix(".gvs") || token[0].hasSuffix(".player") || token[0].hasSuffix(".subs") else {
+                    fail("PO Token 格式为 client.gvs+token、client.player+token 或 client.subs+token")
                 }
                 poTokens[String(token[0])] = String(token[1])
             case "--cookie":
@@ -121,7 +126,8 @@ struct VidexCLI {
             cookies: jar,
             log: verbose ? StderrLogSink(minLevel: .debug) : StderrLogSink(minLevel: .warn),
             includeFormatsMissingPoToken: allowMissingPot,
-            youtubePoTokens: poTokens
+            youtubePoTokens: poTokens,
+            youtubeVisitorData: visitorData
         )
         let registry = ExtractorRegistry(extractors: [
             YouTubeExtractor(clientOrder: clientOrder(from: selectedClients)),
@@ -293,7 +299,8 @@ struct VidexCLI {
           --cookies-from-browser <browser:path>  原生导入明确指定的浏览器文件
           --proxy <url>    代理，如 http://127.0.0.1:7890 或 socks5://127.0.0.1:7891
           --cookies <file>  导入 Netscape cookies.txt（只读取明确指定的文件）
-          --po-token <client.context+token>  外部生成的 PO Token，可重复指定
+          --po-token <client.context+token>  外部 PO Token（gvs/player/subs），可重复指定
+          --visitor-data <value>  与外部访客 GVS Token 配套的 visitorData
           --cookie k=v     注入 Cookie（SESSDATA → bilibili，其余 → youtube）
           --clients <list>  指定 YouTube 客户端轮询顺序，逗号分隔。可用：
                            tv_samsung, visionos, web_embedded, tv_downgraded,

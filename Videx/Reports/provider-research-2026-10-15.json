@@ -1,0 +1,123 @@
+{
+  "date": "2026-10-15",
+  "network": "direct; no imported login cookies",
+  "implementation_changes": [
+    "Bind homepage challenge to matching yt.config_.EVENT_ID; restore watch config afterwards",
+    "Version cache scope to avoid reusing earlier tokens",
+    "CLI accepts --visitor-data and client.subs PO tokens",
+    "Experimental native browser WebPoClient validation; no production default change, no persisted WPC tokens"
+  ],
+  "bgutils": {
+    "control_video": "dQw4w9WgXcQ",
+    "clients": {
+      "mweb": {
+        "complete_download": true,
+        "bytes": 11829048,
+        "duration_seconds": 213.043084,
+        "video": "h264 640x360",
+        "audio": "aac"
+      },
+      "web_safari": {
+        "complete_download": true,
+        "bytes": 11829048,
+        "duration_seconds": 213.043084,
+        "video": "h264 640x360",
+        "audio": "aac"
+      },
+      "web": {
+        "complete_download": true,
+        "bytes": 11829048,
+        "duration_seconds": 213.043084,
+        "video": "h264 640x360",
+        "audio": "aac"
+      }
+    },
+    "ffmpeg_full_decode": {
+      "client": "mweb",
+      "exit_code": 0,
+      "error_log_bytes": 0
+    },
+    "original_video": "rQE3w8Qjx98",
+    "original_clients": {
+      "mweb": "LOGIN_REQUIRED",
+      "web_safari": "LOGIN_REQUIRED",
+      "web": "LOGIN_REQUIRED"
+    }
+  },
+  "native_webpo_client": {
+    "bootstrap": "homepage ?themeRefresh=1; upstream WPC entry; guest session",
+    "original_video": "rQE3w8Qjx98",
+    "token_generation": "succeeded",
+    "original_clients": {
+      "mweb": "LOGIN_REQUIRED",
+      "web_safari": "LOGIN_REQUIRED",
+      "web": "LOGIN_REQUIRED"
+    },
+    "control_validation": {
+      "video": "dQw4w9WgXcQ",
+      "clients": {
+        "web_safari": {
+          "complete_download": true,
+          "bytes": 11829048,
+          "duration_seconds": 213.043084,
+          "streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video",
+              "width": 640,
+              "height": 360
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ]
+        },
+        "web": {
+          "complete_download": true,
+          "bytes": 11829048,
+          "duration_seconds": 213.043084,
+          "streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video",
+              "width": 640,
+              "height": 360
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ]
+        },
+        "mweb": {
+          "complete_download": true,
+          "bytes": 11829048,
+          "duration_seconds": 213.043084,
+          "streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video",
+              "width": 640,
+              "height": 360
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ]
+        }
+      },
+      "test_result": "passed"
+    }
+  },
+  "offline_validation": {
+    "WebPoTokenTests": {
+      "passed": 9,
+      "failed": 0
+    },
+    "videx_cli_build": "passed",
+    "cli_subs_and_visitor_data_parse": "passed"
+  },
+  "conclusion": "Public control video downloads completely through the native downloader. Original video remains rejected at the player stage through both attestation paths. Not a claim of broad YouTube compatibility."
+}

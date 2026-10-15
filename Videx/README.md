@@ -20,7 +20,7 @@ CLI 速查：
 swift run videx "https://www.bilibili.com/video/BV1GJ411x7h7" --cookie SESSDATA=xxx
 swift run videx "https://youtu.be/xxxx" --proxy http://127.0.0.1:7890 --clients tv_samsung,visionos --json
 swift run videx "https://youtu.be/xxxx" --cookies ./cookies.txt --json
-swift run videx "https://youtu.be/xxxx" --clients mweb --po-token "mweb.gvs+TOKEN" --json
+swift run videx "https://youtu.be/xxxx" --clients mweb --po-token "mweb.gvs+TOKEN" --visitor-data "MATCHING_VISITOR_DATA" --json
 swift run videx "https://youtu.be/xxxx" --allow-missing-pot --json   # 调试：强制返回缺 POT 的格式
 ```
 
