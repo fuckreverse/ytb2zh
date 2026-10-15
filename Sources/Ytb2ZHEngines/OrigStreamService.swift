@@ -15,11 +15,15 @@ public struct OrigStreamInfo: Sendable {
     public let kind: OrigStreamKind
     public let title: String
     public let duration: Double
+    public let proxyOverride: String?
+    public let requestHeaders: [String: String]
 
-    public init(kind: OrigStreamKind, title: String, duration: Double) {
+    public init(kind: OrigStreamKind, title: String, duration: Double, proxyOverride: String? = nil, requestHeaders: [String: String] = [:]) {
         self.kind = kind
         self.title = title
         self.duration = duration
+        self.proxyOverride = proxyOverride
+        self.requestHeaders = requestHeaders
     }
 }
 

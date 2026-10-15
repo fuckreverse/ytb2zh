@@ -9,6 +9,7 @@
 | demucs.cpp | `Sources/CDemucsCpp/demucs-src` | MIT (© 2023 Sevag H)，见目录内 [LICENSE](Sources/CDemucsCpp/demucs-src/LICENSE) | [sevagh/demucs.cpp](https://github.com/sevagh/demucs.cpp) |
 | Eigen（数学库头文件） | `Sources/CDemucsCpp/eigen` | MPL-2.0 为主，部分文件为 BSD / Apache-2.0 / MinPack 等 MPL-2.0 兼容许可，详见目录内 `COPYING.*` | [eigen](https://gitlab.com/libeigen/eigen)（pinned dd8c71e，未修改） |
 | sherpa-onnx C API 头 + shim | `Sources/CSherpaOnnx` | Apache-2.0 (© 2023 Xiaomi)，见目录内 [LICENSE](Sources/CSherpaOnnx/LICENSE) | [k2-fsa/sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)（官方 c-api.h，未修改） |
+| bgutils-js（BotGuard 互操作，esbuild 打包为 IIFE 后内联于 `Sources/Ytb2ZHEngines/WebPoTokenScripts.swift`） | 源码内联 | MIT (© LuanRT) | [LuanRT/BgUtils](https://github.com/LuanRT/BgUtils)（pinned bgutils-js 4.0.3） |
 
 说明：Eigen 为 MPL-2.0 文件级 copyleft——对本目录 Eigen 文件的任何修改须继续以 MPL-2.0 提供；demucs.cpp 的 C++ 源码与 `demucscpp_c.cpp` / `include/demucscpp.h` C shim 同样保留 MIT 声明。
 

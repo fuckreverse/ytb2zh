@@ -35,6 +35,8 @@ public final class YtDlpDownloadEngine: DownloadEngine, @unchecked Sendable {
         if !options.proxy.isEmpty { args += ["--proxy", options.proxy] }
         args += ["--no-playlist", "--no-part", "-f", options.format,
                  "-o", outTpl, "--newline", url]
+        // 备用二进制使用独立的 PO Token / JS 求解器配置；
+        // 此路径不会自动复用应用内 WKWebView 的会话，受限格式的可用性由其配置决定。
         // 试转模式：只下载前 N 秒（download-sections 需 ffmpeg 切段合并，管线本就依赖 ffmpeg；
         // 关键帧处切段即可，时长略超无妨——Pipeline 会再统一精确截取）
         if let secs = options.partialSeconds, secs > 0 {

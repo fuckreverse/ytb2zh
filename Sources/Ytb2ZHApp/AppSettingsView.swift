@@ -1,5 +1,6 @@
 import SwiftUI
 import Ytb2ZHCore
+import Ytb2ZHEngines
 
 // MARK: - 应用设置（全局）：网络设置 / 模型提供商 / 模型分配
 // 与「转换设置」的分工：这里是应用级全局项（对所有模板与任务生效），
@@ -47,11 +48,17 @@ struct AppSettingsView: View {
 
 private struct NetworkTab: View {
     @AppStorage(AppSettings.proxyKey) private var proxy = ""
+    @AppStorage("youtubeCookieFile") private var youtubeCookieFile = ""
+    @AppStorage("youtubeCookieSource") private var youtubeCookieSource = "netscape"
+    @AppStorage(WebPotHarvestSetting.key) private var youtubeWebPOTEnabled = true
     @AppStorage(AppSettings.proxyForDownloadKey) private var forDownload = true
     @AppStorage(AppSettings.proxyForSearchKey) private var forSearch = true
     @AppStorage(AppSettings.proxyForEdgeTTSKey) private var forEdgeTTS = true
     // 存储位置
     @State private var jobRootPath = JobStore().root.path
+    // PO Token 收割状态（诊断展示）
+    @State private var potStatus = ""
+    @State private var potHarvesting = false
     // 界面语言（AppleLanguages 覆盖 + 重启生效）
     @State private var langSelection: String = L10n.currentLanguage
     @State private var langNeedsRestart = false
@@ -102,6 +109,45 @@ private struct NetworkTab: View {
                 .help("Videx 原生提取优先；备用 yt-dlp（按需自动下载）、搜索取数与 edge-tts 走外网；百炼/兼容 API 直连国内或由 API 端自行处理，不受此开关影响")
             }
 
+            Section("YouTube 会话") {
+                Picker("会话文件格式", selection: $youtubeCookieSource) {
+                    Text("Netscape cookies.txt").tag("netscape")
+                    Text("Firefox cookies.sqlite").tag("firefox")
+                    Text("Chrome Cookies 数据库").tag("chrome")
+                    Text("Safari Cookies.binarycookies").tag("safari")
+                }
+                LabeledContent("Cookie 文件") {
+                    HStack {
+                        Text(youtubeCookieFile.isEmpty ? "未配置" : URL(fileURLWithPath: youtubeCookieFile).lastPathComponent)
+                            .foregroundStyle(.secondary)
+                        Button("选择会话文件…") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseDirectories = false
+                            panel.allowsMultipleSelection = false
+                            if panel.runModal() == .OK, let url = panel.url { youtubeCookieFile = url.path }
+                        }
+                        if !youtubeCookieFile.isEmpty { Button("清除") { youtubeCookieFile = "" } }
+                    }
+                }
+                Text("只读取明确选择的会话文件中的 YouTube Cookie；浏览器数据库每次重新读取，Chrome 解密使用系统钥匙串。")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                Toggle("Web PO Token 收割（实验）", isOn: $youtubeWebPOTEnabled)
+                    .toggleStyle(.checkbox)
+                Text("提取时用内置 WebView 执行 BotGuard，为当前视频生成配套的媒体与字幕 PO Token。"
+                     + "缓存按视频、会话和代理隔离，最长复用 6 小时；仍需满足视频的登录和访问权限。")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button("查看令牌状态", action: refreshPOTStatus)
+                    Text(potStatus).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+                HStack(spacing: 8) {
+                    Button("立即收割", action: harvestPOTNow)
+                        .disabled(potHarvesting)
+                    if potHarvesting { ProgressView().controlSize(.small) }
+                }
+            }
+
             Section("任务存储位置") {
                 LabeledContent("当前目录") {
                     VStack(alignment: .leading, spacing: 6) {
@@ -135,6 +181,36 @@ private struct NetworkTab: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         UserDefaults.standard.set(url.path, forKey: AppSettings.jobRootKey)
         jobRootPath = JobStore().root.path
+    }
+
+    // MARK: PO Token 收割（诊断）
+
+    private func refreshPOTStatus() {
+        if let token = WebPoTokenProvider.cached() {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm"
+            potStatus = "缓存有效：\(token.videoID ?? "会话诊断")，有效至 \(formatter.string(from: token.expiresAt))"
+        } else {
+            potStatus = "无有效缓存（\(WebPoTokenProvider.cachePath) 不存在或已过期）"
+        }
+    }
+
+    private func harvestPOTNow() {
+        potHarvesting = true
+        potStatus = "正在收割…"
+        Task {
+            do {
+                let token = try await WebPoTokenProvider.harvest(bypassThrottle: true) { line in
+                    AppLog.info("pot", line)
+                }
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm"
+                potStatus = "会话生成测试成功，有效至 \(formatter.string(from: token.expiresAt))；下载时自动铸造视频 Token"
+            } catch {
+                potStatus = "收割失败：\(error.localizedDescription)"
+            }
+            potHarvesting = false
+        }
     }
 
     private func resetRoot() {

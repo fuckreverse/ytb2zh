@@ -1,0 +1,179 @@
+{
+  "date": "2026-10-15",
+  "yt_dlp_version": "2026.10.10.233141",
+  "official_latest_verified": true,
+  "configuration": {
+    "client": "WEB only",
+    "proxy": "direct",
+    "credentials": "same per-video native WKWebView cache; no credentials included in report",
+    "user_agent": "matched WKWebView user agent",
+    "gvs_bindings_tested_in_ytdlp": [
+      "session",
+      "video"
+    ],
+    "player_and_subs_binding": "video ID"
+  },
+  "yt_dlp": [
+    {
+      "version": "2026.10.10.233141",
+      "video": "rQE3w8Qjx98",
+      "gvs_binding": "session",
+      "same_native_credentials": true,
+      "status": "ERROR",
+      "error_type": "DownloadError",
+      "error": "ERROR: [youtube] rQE3w8Qjx98: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication. See  [URL]  for how to manually pass cookies. Also see  [URL]  for tips on effectively exporting YouTube cookies",
+      "gvs_video_experiment": false
+    },
+    {
+      "version": "2026.10.10.233141",
+      "video": "rQE3w8Qjx98",
+      "gvs_binding": "video",
+      "same_native_credentials": true,
+      "status": "ERROR",
+      "error_type": "DownloadError",
+      "error": "ERROR: [youtube] rQE3w8Qjx98: Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication. See  [URL]  for how to manually pass cookies. Also see  [URL]  for tips on effectively exporting YouTube cookies",
+      "gvs_video_experiment": false
+    },
+    {
+      "version": "2026.10.10.233141",
+      "video": "dQw4w9WgXcQ",
+      "gvs_binding": "session",
+      "same_native_credentials": true,
+      "status": "OK",
+      "formats": [
+        {
+          "id": "sb3",
+          "protocol": "mhtml"
+        },
+        {
+          "id": "sb2",
+          "protocol": "mhtml"
+        },
+        {
+          "id": "sb1",
+          "protocol": "mhtml"
+        },
+        {
+          "id": "sb0",
+          "protocol": "mhtml"
+        },
+        {
+          "id": "91",
+          "protocol": "m3u8_native"
+        },
+        {
+          "id": "92",
+          "protocol": "m3u8_native"
+        },
+        {
+          "id": "93",
+          "protocol": "m3u8_native"
+        },
+        {
+          "id": "18",
+          "protocol": "https"
+        },
+        {
+          "id": "94",
+          "protocol": "m3u8_native"
+        },
+        {
+          "id": "95",
+          "protocol": "m3u8_native"
+        },
+        {
+          "id": "96",
+          "protocol": "m3u8_native"
+        }
+      ],
+      "subtitle_languages": 5,
+      "media_status": 206,
+      "media_bytes": 65536,
+      "subtitle_status": 200,
+      "subtitle_bytes": 8325,
+      "subtitle_events": 61,
+      "gvs_video_experiment": false
+    },
+    {
+      "version": "2026.10.10.233141",
+      "video": "dQw4w9WgXcQ",
+      "gvs_binding": "video",
+      "same_native_credentials": true,
+      "status": "OK",
+      "formats": [
+        {
+          "id": "sb3",
+          "protocol": "mhtml"
+        },
+        {
+          "id": "sb2",
+          "protocol": "mhtml"
+        },
+        {
+          "id": "sb1",
+          "protocol": "mhtml"
+        },
+        {
+          "id": "sb0",
+          "protocol": "mhtml"
+        },
+        {
+          "id": "91",
+          "protocol": "m3u8_native"
+        },
+        {
+          "id": "92",
+          "protocol": "m3u8_native"
+        },
+        {
+          "id": "93",
+          "protocol": "m3u8_native"
+        },
+        {
+          "id": "18",
+          "protocol": "https"
+        },
+        {
+          "id": "94",
+          "protocol": "m3u8_native"
+        },
+        {
+          "id": "95",
+          "protocol": "m3u8_native"
+        },
+        {
+          "id": "96",
+          "protocol": "m3u8_native"
+        }
+      ],
+      "subtitle_languages": 5,
+      "media_status": 206,
+      "media_bytes": 65536,
+      "subtitle_status": 200,
+      "subtitle_bytes": 8325,
+      "subtitle_events": 61,
+      "gvs_video_experiment": false
+    }
+  ],
+  "videx": [
+    {
+      "video": "rQE3w8Qjx98",
+      "status": "LOGIN_REQUIRED",
+      "message": "Sign in to confirm you are not a bot",
+      "failure_stage": "player API; no media download attempted"
+    },
+    {
+      "video": "dQw4w9WgXcQ",
+      "status": "OK",
+      "shared_https_format": "18",
+      "media_status": 206,
+      "media_bytes": 65536,
+      "sabr_audio_duration_requested_seconds": 2,
+      "sabr_download_verified": true,
+      "subtitle_status": 200,
+      "subtitle_bytes": 8325,
+      "subtitle_contains_timed_events": true
+    }
+  ],
+  "conclusion": "Same-session results agree on the original login failure and successful control media/subtitles. This does not establish complete compatibility across videos, accounts, clients or network environments."
+}

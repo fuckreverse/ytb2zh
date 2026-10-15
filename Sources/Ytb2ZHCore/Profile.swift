@@ -10,6 +10,12 @@ public struct DownloadOptions: Codable, Hashable, Sendable {
     /// 运行时注入（试转模式）：只下载/截取前 N 秒，不写入模板 JSON
     public var partialSeconds: Int?
 
+    /// 原生直播与下载控制。
+    public var liveFromStart: Bool = false
+    public var startSeconds: Double = 0
+    public var durationSeconds: Double? = nil
+    public var rateLimitBytesPerSecond: Int? = nil
+
     /// 优先 avc1/m4a（AVPlayer 原生可播，原声即播模式必需）；找不到再回退任意格式
     public init(format: String = "bv*[vcodec^=avc1][height<=720]+ba[ext=m4a]/b[ext=mp4][height<=720]/bv*[height<=720]+ba/b[height<=720]",
                 proxy: String = "http://127.0.0.1:7890", keepSource: Bool = true) {

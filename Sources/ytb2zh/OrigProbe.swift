@@ -74,7 +74,7 @@ enum OrigProbe {
             print("   audio: \(String(a.prefix(90)))…")
         }
 
-        let server = OrigStreamServer(kind: info.kind, proxy: proxy)
+        let server = OrigStreamServer(kind: info.kind, proxy: info.proxyOverride ?? proxy, requestHeaders: info.requestHeaders)
         try server.start()
         defer { server.stop() }
         guard let play = server.localPlayURL else {

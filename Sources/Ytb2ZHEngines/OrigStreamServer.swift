@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Ytb2ZHCore
+import Videx
 
 // MARK: - 本地回环反代：AVPlayer → 127.0.0.1 → URLSession(带全局代理) → 视频流
 // progressive：Range 头透传，支持任意拖动进度；
@@ -16,28 +17,27 @@ public final class OrigStreamServer: @unchecked Sendable {
     public let token = UUID().uuidString.lowercased()
     private let kind: OrigStreamKind
     private let proxy: String
+    private let requestHeaders: [String: String]
     private let queue = DispatchQueue(label: "ytb2zh.origstream")
     private var listener: NWListener?
     private(set) public var port: UInt16 = 0
 
-    public init(kind: OrigStreamKind, proxy: String) {
+    public init(kind: OrigStreamKind, proxy: String, requestHeaders: [String: String] = [:]) {
         self.kind = kind
         self.proxy = proxy
+        self.requestHeaders = requestHeaders
     }
 
     /// URLSession connectionProxyDictionary 键（kCFStream 系，HTTP/HTTPS 都要给）
     public static func proxyDict(_ proxy: String) -> [String: Any]? {
-        let s = proxy.trimmingCharacters(in: .whitespaces)
-        guard !s.isEmpty,
-              let url = URL(string: s.hasPrefix("http") ? s : "http://" + s),
-              let host = url.host else { return nil }
-        let port = url.port ?? 8080
-        return [
-            kCFStreamPropertyHTTPProxyHost as String: host,
-            kCFStreamPropertyHTTPProxyPort as String: port,
-            kCFStreamPropertyHTTPSProxyHost as String: host,
-            kCFStreamPropertyHTTPSProxyPort as String: port,
-        ]
+        let value = proxy.trimmingCharacters(in: .whitespaces)
+        guard !value.isEmpty else { return nil }
+        guard var url = URLComponents(string: value.contains("://") ? value : "http://" + value) else { return nil }
+        if url.port == nil { url.port = url.scheme?.hasPrefix("socks") == true ? 1080 : 8080 }
+        return URLSessionHTTPClient.proxyDictionary(from: url.string ?? value).reduce(into: [String: Any]()) { result, pair in
+            if let key = pair.key.base as? String { result[key] = pair.value }
+        }
+
     }
 
     public static func sessionConfig() -> URLSessionConfiguration {
@@ -92,6 +92,9 @@ public final class OrigStreamServer: @unchecked Sendable {
 
     /// 合成 master：视频主 playlist + 音频 rendition 组，AVPlayer 自动混流双轨
     public static func masterM3U8(videoProxied: String, audioProxied: String, height: Int) -> String {
+        if audioProxied.isEmpty {
+            return "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=2500000\n\(videoProxied)\n"
+        }
         let res = height > 0 ? ",RESOLUTION=\(Int(Double(height) * 16 / 9.0))x\(height)" : ""
         return """
         #EXTM3U
@@ -156,6 +159,21 @@ public final class OrigStreamServer: @unchecked Sendable {
     public func kindOf() -> OrigStreamKind { kind }
 
     public func proxyValue() -> String { proxy }
+
+    public func upstreamHeaders(for url: URL) -> [String: String] {
+        let origins: [String]
+        switch kind {
+        case .progressive(let url): origins = [url]
+        case .hls(let video, let audio): origins = [video,audio]
+        }
+        let sameOrigin = origins.contains { original in
+            guard let original = URL(string:original) else { return false }
+            return original.host == url.host && original.scheme == url.scheme && original.port == url.port
+        }
+        return requestHeaders.filter { key, _ in
+            !["cookie", "authorization"].contains(key.lowercased()) || sameOrigin
+        }
+    }
 
     public func localPrefix() -> String { "http://127.0.0.1:\(port)" }
 }
@@ -240,7 +258,7 @@ private final class Pump: @unchecked Sendable {
         case .hls(let video, let audio):
             if path.hasPrefix("/master") {
                 let vp = "\(server.localPrefix())/p?u=\(OrigStreamServer.b64url(video))&t=\(server.token)"
-                let ap = "\(server.localPrefix())/p?u=\(OrigStreamServer.b64url(audio))&t=\(server.token)"
+                let ap = audio.isEmpty ? "" : "\(server.localPrefix())/p?u=\(OrigStreamServer.b64url(audio))&t=\(server.token)"
                 sendText("200 OK",
                          body: OrigStreamServer.masterM3U8(videoProxied: vp, audioProxied: ap, height: 0),
                          contentType: "application/vnd.apple.mpegurl")
@@ -260,6 +278,7 @@ private final class Pump: @unchecked Sendable {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
         }
         var req = URLRequest(url: upstream)
+        for (key,value) in server.upstreamHeaders(for:upstream) { req.setValue(value,forHTTPHeaderField:key) }
         if let range { req.setValue(range, forHTTPHeaderField: "Range") }
         let cfg = OrigStreamServer.sessionConfig()
         if let d = OrigStreamServer.proxyDict(server.proxyValue()) { cfg.connectionProxyDictionary = d }
@@ -279,6 +298,7 @@ private final class Pump: @unchecked Sendable {
             reject("bad u"); return
         }
         var req = URLRequest(url: url)
+        for (key,value) in server.upstreamHeaders(for:url) { req.setValue(value,forHTTPHeaderField:key) }
         req.timeoutInterval = 30
         let cfg = OrigStreamServer.sessionConfig()
         if let d = OrigStreamServer.proxyDict(server.proxyValue()) { cfg.connectionProxyDictionary = d }

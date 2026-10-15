@@ -63,7 +63,7 @@ struct OriginalPlayerView: View {
             }.value
             guard !Task.isCancelled else { return }
             title = info.title
-            let srv = OrigStreamServer(kind: info.kind, proxy: proxy)
+            let srv = OrigStreamServer(kind: info.kind, proxy: info.proxyOverride ?? proxy, requestHeaders: info.requestHeaders)
             try srv.start()
             guard let play = srv.localPlayURL else {
                 throw EngineError.engineFailure("本地流服务未就绪")
