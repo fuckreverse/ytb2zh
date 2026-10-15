@@ -1,3 +1,17 @@
+# Hidden local state is private unless explicitly shared below.
+.*
+
+# Repository metadata, GitHub Actions, and shared source-formatting configuration.
+!.gitignore
+!.gitattributes
+!.gitmodules
+!/.github/
+!.editorconfig
+!.swift-format
+!.swiftlint.yml
+!.swift-version
+!.clang-format
+
 # Swift Package Manager build artifacts
 .build/
 .swiftpm/
