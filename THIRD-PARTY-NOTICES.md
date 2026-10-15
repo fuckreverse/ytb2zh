@@ -42,3 +42,7 @@
 ## 6. Videx 提取逻辑来源
 
 `Videx/` 为本项目的独立实现（MIT），其中部分提取逻辑参考或移植自 [yt-dlp](https://github.com/yt-dlp/yt-dlp)（**Unlicense**，公有领域奉献——复制、修改、再许可均无条件，不产生任何署名或开源义务）。相关文件头部有来源注释，仅为工程溯源便利。
+
+## yt-dlp EJS 0.8.0
+
+Embedded scripts: [yt-dlp/ejs](https://github.com/yt-dlp/ejs), Unlicense. Bundled Meriyah (ISC) and Astring (MIT) notices are retained in the JavaScript. See Videx/Sources/Videx/YouTube/Resources/EJS-LICENSE.txt. Native SABR protocol references [upstream SABR work](https://github.com/yt-dlp/yt-dlp/pull/13515), Unlicense.

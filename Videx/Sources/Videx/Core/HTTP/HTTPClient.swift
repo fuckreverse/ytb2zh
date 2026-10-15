@@ -7,17 +7,19 @@ public struct HTTPRequest: Sendable {
     public var url: URL
     public var headers: [String: String]
     public var body: Data?
+    public var maximumResponseBytes: Int?
 
     public init(
         method: String = "GET",
         url: URL,
         headers: [String: String] = [:],
-        body: Data? = nil
+        body: Data? = nil, maximumResponseBytes: Int? = nil
     ) {
         self.method = method
         self.url = url
         self.headers = headers
         self.body = body
+        self.maximumResponseBytes = maximumResponseBytes
     }
 
     public static func get(_ url: URL, headers: [String: String] = [:]) -> HTTPRequest {
@@ -124,7 +126,17 @@ public final class URLSessionHTTPClient: HTTPFetching, @unchecked Sendable {
         let data: Data
         let urlResponse: URLResponse
         do {
-            (data, urlResponse) = try await session.data(for: urlRequest)
+            if let maximum = request.maximumResponseBytes {
+                let (bytes, response) = try await session.bytes(for: urlRequest)
+                var buffered = Data()
+                for try await byte in bytes {
+                    guard buffered.count < maximum else { throw ExtractionError.network("响应超过请求允许的大小，已停止读取") }
+                    buffered.append(byte)
+                }
+                data = buffered; urlResponse = response
+            } else {
+                (data, urlResponse) = try await session.data(for: urlRequest)
+            }
         } catch {
             throw ExtractionError.network("\(error.localizedDescription) — \(request.url.absoluteString)")
         }

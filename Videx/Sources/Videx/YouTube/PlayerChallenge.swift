@@ -18,6 +18,7 @@ struct PlayerChallenge: Sendable {
     let modern: ModernChallenge.Extracted?
     /// 跨 format 的求解 memo（引用类型，实例共享时天然去重）。
     let memo: SolutionMemo
+    var fullPlayerSource: String? = nil
 
     // MARK: - Extraction
 
@@ -41,13 +42,13 @@ struct PlayerChallenge: Sendable {
         }
 
         let hasLegacy = (decipherName != nil || nsigName != nil) && !snippets.isEmpty
-        guard hasLegacy || modern != nil else { return nil }
+        guard hasLegacy || modern != nil || playerJS.contains("/s/player/") || playerJS.contains("signatureTimestamp") else { return nil }
         return PlayerChallenge(
             script: snippets.joined(separator: "\n"),
             decipherFunctionName: decipherName,
             nsigFunctionName: nsigName,
             modern: modern,
-            memo: SolutionMemo()
+            memo: SolutionMemo(), fullPlayerSource: playerJS
         )
     }
 
@@ -136,6 +137,11 @@ struct PlayerChallenge: Sendable {
         if let modern {
             solved = (try? ModernChallenge.solveBatch(modern, channel: .sig, inputs: unique, js: runtime)) ?? [:]
         }
+        let missing = unique.filter { solved[$0] == nil }
+        if !missing.isEmpty, let source = fullPlayerSource,
+           let upstream = try? NativeEJSSolver.solve(player: source, channel: "sig", inputs: missing, runtime: runtime) {
+            solved.merge(upstream) { _, new in new }
+        }
         // 经典回退：仅补齐现代通道未解出的
         for s in unique where solved[s] == nil {
             guard decipherFunctionName != nil else { break }
@@ -155,6 +161,11 @@ struct PlayerChallenge: Sendable {
         var solved: [String: String] = [:]
         if let modern {
             solved = (try? ModernChallenge.solveBatch(modern, channel: .n, inputs: unique, js: runtime)) ?? [:]
+        }
+        let missing = unique.filter { solved[$0] == nil }
+        if !missing.isEmpty, let source = fullPlayerSource,
+           let upstream = try? NativeEJSSolver.solve(player: source, channel: "n", inputs: missing, runtime: runtime) {
+            solved.merge(upstream) { _, new in new }
         }
         for n in unique where solved[n] == nil {
             guard nsigFunctionName != nil else { break }

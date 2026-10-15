@@ -12,7 +12,7 @@ public enum SubtitleConverter {
         _ track: SubtitleTrack,
         client: HTTPFetching
     ) async throws -> String {
-        let resp = try await client.fetch(.get(track.url))
+        let resp = try await client.fetch(.get(track.url, headers: track.requestHeaders ?? [:]))
         guard resp.isOK else {
             throw ExtractionError.network("HTTP \(resp.status) 下载字幕失败 — \(track.url.absoluteString)")
         }

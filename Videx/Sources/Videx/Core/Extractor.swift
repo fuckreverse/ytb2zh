@@ -28,17 +28,33 @@ public struct ExtractionContext: Sendable {
     public let js: JSRuntime
     public let cookies: CookieJar
     public let log: LogSink
+    /// YouTube：是否保留缺 GVS PO Token 的格式（默认丢弃，对齐 yt-dlp
+    /// 默认不返回 missing_pot 格式的行为；这些格式下载时会 403）。
+    /// 调试时可置 true 强制返回（等价 `--extractor-args youtube:formats=missing_pot`）。
+    public var includeFormatsMissingPoToken: Bool
+    /// External PO Tokens keyed by client.context (e.g. web.gvs, mweb.player).
+    public var youtubePoTokens: [String: String]
+    /// 外部收割的 visitorData：PO Token 与 visitorData 绑定，提供 token 时
+    /// 必须同时提供其铸造时的 visitorData，web 系客户端才会用它发请求
+    /// （否则 token 校验不通过）。nil 时沿用页面解析出的 visitorData。
+    public var youtubeVisitorData: String?
 
     public init(
         http: HTTPFetching,
         js: JSRuntime,
         cookies: CookieJar = CookieJar(),
-        log: LogSink = NullLogSink()
+        log: LogSink = NullLogSink(),
+        includeFormatsMissingPoToken: Bool = false,
+        youtubePoTokens: [String: String] = [:],
+        youtubeVisitorData: String? = nil
     ) {
         self.http = http
         self.js = js
         self.cookies = cookies
         self.log = log
+        self.includeFormatsMissingPoToken = includeFormatsMissingPoToken
+        self.youtubePoTokens = youtubePoTokens
+        self.youtubeVisitorData = youtubeVisitorData
     }
 
     /// 按选项构建默认上下文。
@@ -47,7 +63,15 @@ public struct ExtractionContext: Sendable {
         httpFactory: (ExtractionOptions) -> HTTPFetching = { URLSessionHTTPClient(proxy: $0.proxy, timeout: $0.timeout) },
         js: JSRuntime = JavaScriptCoreRuntime()
     ) -> ExtractionContext {
-        ExtractionContext(http: httpFactory(options), js: js, cookies: options.cookies, log: options.log)
+        ExtractionContext(
+            http: httpFactory(options),
+            js: js,
+            cookies: options.cookies,
+            log: options.log,
+            includeFormatsMissingPoToken: options.includeFormatsMissingPoToken,
+            youtubePoTokens: options.youtubePoTokens,
+            youtubeVisitorData: options.youtubeVisitorData
+        )
     }
 }
 
@@ -60,17 +84,29 @@ public struct ExtractionOptions: Sendable {
     public var cookies: CookieJar
     public var timeout: TimeInterval
     public var log: LogSink
+    /// YouTube：保留缺 GVS PO Token 的格式（默认 false，丢弃以避免 403）。
+    public var includeFormatsMissingPoToken: Bool
+    /// External PO Tokens keyed by client.context (e.g. web.gvs, mweb.player).
+    public var youtubePoTokens: [String: String]
+    /// 外部收割的 visitorData（与 youtubePoTokens 配套；见 ExtractionContext 说明）。
+    public var youtubeVisitorData: String?
 
     public init(
         proxy: String? = nil,
         cookies: CookieJar = CookieJar(),
         timeout: TimeInterval = 30,
-        log: LogSink = NullLogSink()
+        log: LogSink = NullLogSink(),
+        includeFormatsMissingPoToken: Bool = false,
+        youtubePoTokens: [String: String] = [:],
+        youtubeVisitorData: String? = nil
     ) {
         self.proxy = proxy
         self.cookies = cookies
         self.timeout = timeout
         self.log = log
+        self.includeFormatsMissingPoToken = includeFormatsMissingPoToken
+        self.youtubePoTokens = youtubePoTokens
+        self.youtubeVisitorData = youtubeVisitorData
     }
 }
 

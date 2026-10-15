@@ -1,5 +1,6 @@
 // 提取逻辑部分参考/移植自 yt-dlp（Unlicense，公有领域）。
 import Foundation
+import CryptoKit
 
 // MARK: - YouTube 搜索/浏览门面（纯 InnerTube，无 yt-dlp 依赖）
 //
@@ -23,13 +24,16 @@ public final class YouTubeSearchService: @unchecked Sendable {
     /// videosOnly=true 时只返回视频条目（分页 token 也按过滤后的条数对齐，
     /// 与调用方以"已取视频数"作 offset 的习惯匹配）。
     public func fetchPage(query: String, offset: Int = 0, proxy: String = "",
-                          videosOnly: Bool = false) async throws -> InnerTubeSearchResult {
+                          videosOnly: Bool = false, cookies: CookieJar = CookieJar()) async throws -> InnerTubeSearchResult {
         let client = InnerTubeClient(
             http: URLSessionHTTPClient(proxy: proxy.isEmpty ? nil : proxy),
-            cookies: CookieJar())
+            cookies: cookies)
 
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let route = Self.route(trimmed)
+        let session = cookies.header(for: URL(string: "https://www.youtube.com")!) ?? ""
+        let digest = SHA256.hash(data: Data((proxy + "|" + session).utf8)).map { String(format: "%02x", $0) }.joined()
+        let cacheKey = trimmed + "|" + digest + "|" + String(videosOnly)
 
         // 首页
         if offset == 0 {
@@ -52,17 +56,17 @@ public final class YouTubeSearchService: @unchecked Sendable {
                 result = InnerTubeSearchResult(items: [], continuation: nil, title: nil)
             }
             let page = Self.finalize(result, videosOnly: videosOnly)
-            Self.storeToken(for: trimmed, offset: page.items.count, token: page.continuation)
+            Self.storeToken(for: cacheKey, offset: page.items.count, token: page.continuation)
             return page
         }
 
         // 翻页：查 token 缓存（UI 以 results.count 作为 offset，天然对齐）
-        switch Self.cachedToken(for: trimmed, offset: offset) {
+        switch Self.cachedToken(for: cacheKey, offset: offset) {
         case .some(.some(let token)):
             guard !token.isEmpty else {
                 return InnerTubeSearchResult(items: [], continuation: nil, title: nil) // 已到底
             }
-            return try await continuationPage(route: route, query: trimmed, token: token,
+            return try await continuationPage(route: route, query: trimmed, cacheKey: cacheKey, token: token,
                                               client: client, consumedBefore: offset,
                                               videosOnly: videosOnly)
         case .some(.none):
@@ -70,10 +74,10 @@ public final class YouTubeSearchService: @unchecked Sendable {
             return InnerTubeSearchResult(items: [], continuation: nil, title: nil)
         case .none:
             // 缓存未命中（进程重启/跳页）→ 从头顺序拉到 offset
-            var page = try await fetchPage(query: query, offset: 0, proxy: proxy, videosOnly: videosOnly)
+            var page = try await fetchPage(query: query, offset: 0, proxy: proxy, videosOnly: videosOnly, cookies: cookies)
             var covered = page.items.count
             while covered < offset, let next = page.continuation {
-                page = try await continuationPage(route: route, query: trimmed, token: next,
+                page = try await continuationPage(route: route, query: trimmed, cacheKey: cacheKey, token: next,
                                                   client: client, consumedBefore: covered,
                                                   videosOnly: videosOnly)
                 covered += page.items.count
@@ -95,7 +99,7 @@ public final class YouTubeSearchService: @unchecked Sendable {
     private static func storeToken(for query: String, offset: Int, token: String?) {
         tokenLock.withLock {
             var perQuery = tokenCache[query] ?? [:]
-            perQuery[offset] = token
+            perQuery[offset] = .some(token)
             tokenCache[query] = perQuery
         }
     }
@@ -123,7 +127,7 @@ public final class YouTubeSearchService: @unchecked Sendable {
 
     /// 翻页：回到原端点带 continuation token（search/browse 均如此，
     /// next 端点仅用于 watch 页相关推荐，不用于搜索翻页）。
-    private func continuationPage(route: QueryRoute, query: String, token: String,
+    private func continuationPage(route: QueryRoute, query: String, cacheKey: String, token: String,
                                   client: InnerTubeClient, consumedBefore: Int,
                                   videosOnly: Bool = false) async throws -> InnerTubeSearchResult {
         let json: JSON
@@ -150,7 +154,7 @@ public final class YouTubeSearchService: @unchecked Sendable {
         }
         let raw = InnerTubeParser.collect(from: json)
         let result = Self.finalize(raw, videosOnly: videosOnly)
-        Self.storeToken(for: query, offset: consumedBefore + result.items.count, token: result.continuation)
+        Self.storeToken(for: cacheKey, offset: consumedBefore + result.items.count, token: result.continuation)
         return result
     }
 

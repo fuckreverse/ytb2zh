@@ -9,7 +9,8 @@ let package = Package(
         .executable(name: "videx", targets: ["videx-cli"]),
     ],
     targets: [
-        .target(name: "Videx", path: "Sources/Videx"),
+        .systemLibrary(name: "CSystemSupport"),
+        .target(name: "Videx", dependencies: ["CSystemSupport"], path: "Sources/Videx", resources: [.copy("YouTube/Resources")]),
         .executableTarget(
             name: "videx-cli",
             dependencies: ["Videx"],
