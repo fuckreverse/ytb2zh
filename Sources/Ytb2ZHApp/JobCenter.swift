@@ -17,6 +17,7 @@ struct JobListItem: Identifiable {
     let isRunning: Bool
     let doneCount: Int
     let hasFailed: Bool
+    var failureMessage: String? = nil
 
     var hasFinalVideo: Bool { JobStore().hasFinalVideo(id) }
 }
@@ -60,9 +61,20 @@ final class JobCenterModel: ObservableObject {
                 createdAt: st.createdAt,
                 isRunning: steps.contains(.running),
                 doneCount: steps.filter { $0 == .done }.count,
-                hasFailed: steps.contains(.failed))
+                hasFailed: steps.contains(.failed),
+                failureMessage: steps.contains(.failed) ? Self.failureMessage(store: store, id: id) : nil)
         }
         backfillMissing()
+    }
+
+    private static func failureMessage(store: JobStore, id: String) -> String? {
+        let log = store.jobDir(id: id).appendingPathComponent("log.txt")
+        guard let handle = try? FileHandle(forReadingFrom: log) else { return nil }
+        defer { try? handle.close() }
+        guard let size = try? handle.seekToEnd() else { return nil }
+        try? handle.seek(toOffset: size > 8192 ? size - 8192 : 0)
+        guard let data = try? handle.readToEnd(), let text = String(data: data, encoding: .utf8) else { return nil }
+        return text.components(separatedBy: .newlines).last(where: { $0.contains("❌") })
     }
 
     /// 手动刷新时清空失败记录，允许重试拉取元数据
@@ -92,7 +104,7 @@ final class JobCenterModel: ObservableObject {
                 channel: m?.channel ?? d.channel,
                 thumbnailURL: m?.thumbnail ?? d.thumbnail ?? it.thumbnailURL,
                 createdAt: it.createdAt,
-                isRunning: it.isRunning, doneCount: it.doneCount, hasFailed: it.hasFailed)
+                isRunning: it.isRunning, doneCount: it.doneCount, hasFailed: it.hasFailed, failureMessage: it.failureMessage)
         }
     }
 
@@ -137,8 +149,7 @@ struct JobCenterView: View {
             headerBar
             Divider()
             if model.items.isEmpty {
-                Text("暂无任务").foregroundStyle(.secondary).padding(40)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                AppEmptyState(icon: "checklist", title: "让第一个视频说中文", message: "这里会记录处理进度、保存译文，并支持失败重试和断点续跑。", actionTitle: "新建转换") { navigate(to: .settings) }
             } else if filtered.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "magnifyingglass").font(.largeTitle).foregroundStyle(.secondary)
@@ -162,7 +173,9 @@ struct JobCenterView: View {
                 .listStyle(.inset)
             }
         }
+        .background(AppTheme.canvas)
         .navigationTitle("任务中心")
+        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in reload() }
         .onAppear(perform: reload)
         .sheet(item: Binding(
             get: { editingUnits.map { JobRef(id: $0) } },
@@ -186,9 +199,10 @@ struct JobCenterView: View {
     struct JobRef: Identifiable { let id: String }
 
     private var headerBar: some View {
+        VStack(spacing: 14) {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("任务中心 · \(model.items.count) 个任务").font(.headline)
+                Text("\(model.items.count) 个任务 · 进度与结果一目了然").font(.headline)
                 if model.isBackfilling {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
@@ -198,6 +212,10 @@ struct JobCenterView: View {
                 }
             }
             Spacer()
+            Button { navigate(to: .settings) } label: { Label("新建转换", systemImage: "plus") }
+                .buttonStyle(.borderedProminent)
+            }
+            HStack(spacing: 12) {
             Picker("", selection: $filterRaw) {
                 ForEach(JobStatusFilter.allCases) { f in
                     Text(L(f.label)).tag(f.rawValue)
@@ -214,8 +232,9 @@ struct JobCenterView: View {
                 model.backfillReset()
                 reload()
             } label: { Label("刷新", systemImage: "arrow.clockwise") }
+            }
         }
-        .padding(12)
+        .padding(20)
     }
 
     private func reload() {
@@ -225,7 +244,7 @@ struct JobCenterView: View {
     private func resume(_ jobID: String) {
         let status = store.loadStatus(jobID)
         let pending = Set(status.steps.filter { $0.value != .done }.keys.compactMap { StepID(rawValue: $0) })
-        job.start(url: status.url, profile: Profile(name: status.profileName),
+        job.start(url: status.url, profile: store.loadProfileSnapshot(id: jobID) ?? Profile(name: status.profileName),
                   jobID: jobID, stepFilter: pending)
     }
 
@@ -298,9 +317,16 @@ struct JobRow: View {
                     .lineLimit(1)
                     .help(item.url)
 
+                ProgressView(value: Double(item.doneCount), total: Double(StepID.allCases.count))
+                    .tint(item.hasFailed ? .red : AppTheme.accent)
+                if let message = item.failureMessage {
+                    Text(message).font(.caption).foregroundStyle(.red).lineLimit(2).textSelection(.enabled)
+                } else if let step = StepID.allCases.first(where: { status.steps[$0.rawValue] == .running }) {
+                    Text("正在\(step.label)").font(.caption).foregroundStyle(AppTheme.accent)
+                }
                 HStack(spacing: 8) {
                     Button("详情") { onDetail() }.controlSize(.small)
-                    Button("续跑") { onResume() }.controlSize(.small)
+                    Button(item.hasFailed ? "重试" : "续跑") { onResume() }.controlSize(.small)
                         .disabled(item.isRunning)
                     // 成片尚未产出时，入口文案提示审核语义（翻译已就绪但未转换的任务尤其需要）
                     Button(composeDone ? "编辑译文" : "审核译文") { onEditUnits() }.controlSize(.small)
@@ -311,7 +337,8 @@ struct JobRow: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(12)
+        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 12))
     }
 
     /// 频道 · 任务时间 · 模板名 · jobID（次要信息一行带完）

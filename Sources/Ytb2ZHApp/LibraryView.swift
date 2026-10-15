@@ -125,7 +125,7 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("媒体库 · \(model.items.count) 部已完成")
+                    Text("\(model.items.count) 部视频 · 随时重温中文版")
                         .font(.headline)
                     if model.isBackfilling {
                         HStack(spacing: 6) {
@@ -142,10 +142,11 @@ struct LibraryView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 150)
+                .labelsHidden()
+                .frame(width: 180)
                 TextField("搜索标题 / 频道 / 链接", text: $searchText)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 200)
+                    .frame(minWidth: 130, idealWidth: 180, maxWidth: 220)
                 Button {
                     playing = nil
                     model.backfillReset()
@@ -155,12 +156,7 @@ struct LibraryView: View {
             .padding(12)
             Divider()
             if model.items.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "square.stack.3d.up.slash").font(.largeTitle).foregroundStyle(.secondary)
-                    Text("还没有完成的视频。去任务中心、实时播放或订阅预翻译生成成片后，会自动出现在这里。")
-                        .multilineTextAlignment(.center).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                AppEmptyState(icon: "film.stack", title: "你的中文视频收藏", message: "译配完成的视频会自动保存到这里，随时播放，无需再次等待。", actionTitle: "添加第一个视频") { navigate(to: .settings) }
             } else if filtered.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "magnifyingglass").font(.largeTitle).foregroundStyle(.secondary)
@@ -174,6 +170,7 @@ struct LibraryView: View {
                 dateGroupedBody
             }
         }
+        .background(AppTheme.canvas)
         .onAppear { model.reload() }
         .sheet(item: $playing) { item in
             ReplayPlayerSheet(profile: playProfile(item), url: item.url, title: item.title) {
@@ -262,7 +259,9 @@ struct LibraryView: View {
                                     .overlay(Image(systemName: "film").font(.title2).foregroundStyle(.secondary))
                             }
                         }
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .aspectRatio(16 / 9, contentMode: .fit)
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                         HStack(spacing: 4) {
                             Text(item.profileName)
                                 .font(.caption2)
@@ -281,6 +280,10 @@ struct LibraryView: View {
                         .font(.callout)
                         .lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                    if PlaybackHistory.position(for: item.url) > 5 {
+                        Label("继续观看 · \(LivePlayerView.mmss(PlaybackHistory.position(for: item.url)))", systemImage: "play.circle")
+                            .font(.caption).foregroundStyle(AppTheme.accent)
+                    }
                     Text([item.channel, LibraryView.dateText(item.createdAt)].compactMap { $0 }
                         .joined(separator: " · "))
                         .font(.caption2).foregroundStyle(.secondary)
@@ -300,8 +303,9 @@ struct LibraryView: View {
             }
             .buttonStyle(.plain)
             .help("查看视频信息（标题/简介/频道/播放量…）")
-            .padding(6)
+            .padding(18)
         }
+        .modifier(MediaCardStyle())
     }
 
     /// "1:23:45"
@@ -633,7 +637,7 @@ struct SubscriptionsView: View {
     var body: some View {
         VStack(spacing: 0) {
             headerBar
-            channelBar
+            if !store.subs.isEmpty { channelBar }
             if runner.running { runnerBar }
             Divider()
 
@@ -650,6 +654,7 @@ struct SubscriptionsView: View {
                 videoWall
             }
         }
+        .background(AppTheme.canvas)
         .sheet(item: $detailVideo) { v in
             VideoConvertSheet(video: v, status: convertStatus(v), profileName: profile.name,
                               busy: runner.running,
@@ -706,7 +711,7 @@ struct SubscriptionsView: View {
 
     private var headerBar: some View {
         HStack {
-            Text("订阅 · \(store.subs.count) 个频道").font(.headline)
+            Text("\(store.subs.count) 个频道 · 追踪你喜欢的内容").font(.headline)
             Spacer()
             Button {
                 selecting.toggle()
@@ -1067,15 +1072,7 @@ struct SubscriptionsView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "antenna.radiowaves.left.and.right")
-                .font(.largeTitle).foregroundStyle(.secondary)
-            Text("订阅频道或播放列表，浏览最新视频后按需转换：\n单部转换、勾选批量转换，或进播放页边下边译边播。")
-                .multilineTextAlignment(.center).foregroundStyle(.secondary)
-            Button("添加订阅") { showAdd = true }
-                .buttonStyle(.borderedProminent)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        AppEmptyState(icon: "antenna.radiowaves.left.and.right", title: "把喜欢的频道留在这里", message: "订阅频道或播放列表，浏览最新视频，选择单部译配或批量转换。", actionTitle: "添加订阅") { showAdd = true }
     }
 }
 

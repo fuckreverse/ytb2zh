@@ -449,3 +449,87 @@
 // MARK: 播放弹窗
 "实时播放" = "Live Play";
 "关闭（Esc）" = "Close (Esc)";
+
+/* Refreshed GUI */
+"视频转换" = "Video Conversion";
+"偏好设置" = "Preferences";
+"让视频说中文" = "Make videos speak Chinese";
+"场景预设在「视频转换」中选择" = "Choose a preset in Video Conversion";
+"看世界，听中文" = "Watch the world in Chinese";
+"粘贴视频链接，或搜索你感兴趣的内容" = "Paste a video link or search for something you love";
+"视频链接、频道、播放列表或 YouTube 关键词" = "Video link, channel, playlist, or YouTube keywords";
+"开始" = "Start";
+"停止处理" = "Stop Processing";
+"播放模式" = "Playback Mode";
+"中文译配" = "Chinese Dubbing";
+"边处理边播放，生成中文字幕与配音" = "Watch as Chinese subtitles and dubbing are generated";
+"先看原片，随时切换中文配音" = "Watch the original and switch to Chinese at any time";
+"正在准备原声视频" = "Preparing the original video";
+"正在准备中文译配" = "Preparing Chinese dubbing";
+"准备好后自动播放，你可以切换页面，处理会继续进行。" = "Playback starts when ready. Processing continues while you browse other pages.";
+"从一个视频开始" = "Start with a video";
+"选择中文译配或原声播放，在上方输入链接。也可以输入关键词，发现感兴趣的视频。" = "Choose Chinese dubbing or original audio and enter a link above. You can also search with keywords.";
+"粘贴视频链接" = "Paste Video Link";
+"最近完成" = "Recently Finished";
+"查看媒体库" = "View Library";
+"把精彩内容，变成中文" = "Bring great videos into Chinese";
+"选择视频与场景，译配完成后自动保存到媒体库" = "Choose a video and preset. Finished videos are saved to your library.";
+"视频、频道或播放列表链接" = "Video, channel, or playlist link";
+"频道与播放列表可在播放页展开浏览" = "Browse channels and playlists on the Player page";
+"视频链接已填入，可先试转 3 分钟" = "Video link added. Try converting the first 3 minutes.";
+"选择场景" = "Choose a Preset";
+"配音音色" = "Voice";
+"翻译效果" = "Translation";
+"字幕与声音" = "Subtitles and Audio";
+"保留背景音乐（需开启人声分离）" = "Keep background music (requires vocal separation)";
+"保留原声并降低音量" = "Keep original audio at a lower volume";
+"高级设置 · 默认参数适合大多数视频" = "Advanced settings · Defaults suit most videos";
+"高级参数 · 引擎、处理速度与字幕微调" = "Advanced · Engines, processing speed, and subtitles";
+"处理速度与翻译细节" = "Processing and Translation Details";
+"配音并发" = "Concurrent Voice Requests";
+"根据服务限流调整" = "Adjust to your service rate limit";
+"当前模板不配音（仅字幕）；可在下方「高级参数 → 语音合成」选择配音方式" = "This preset creates subtitles only. Choose a voice engine under Advanced → Speech Synthesis.";
+"先翻译并审核" = "Translate and Review";
+"配置配音" = "Configure Voice";
+"百炼配音尚未配置密钥，可在应用设置中配置，或在高级设置中选择其他配音方式。" = "Bailian needs an API key. Configure it in App Settings or choose another voice engine in Advanced.";
+"删除这个模板？" = "Delete this template?";
+"删除模板" = "Delete Template";
+"视频已添加" = "Video Added";
+"读取视频信息" = "Read Video Info";
+"暂时无法读取信息，你仍可尝试转换视频。" = "Could not read video info. You can still try converting the video.";
+"你的中文视频收藏" = "Your Chinese Video Collection";
+"译配完成的视频会自动保存到这里，随时播放，无需再次等待。" = "Finished videos are saved here for instant playback.";
+"添加第一个视频" = "Add Your First Video";
+"让第一个视频说中文" = "Dub Your First Video";
+"这里会记录处理进度、保存译文，并支持失败重试和断点续跑。" = "Track progress, review translations, and resume interrupted jobs here.";
+"新建转换" = "New Conversion";
+"把喜欢的频道留在这里" = "Keep Your Favorite Channels Here";
+"订阅频道或播放列表，浏览最新视频，选择单部译配或批量转换。" = "Subscribe to channels or playlists, browse new videos, and convert them individually or in batches.";
+"设置你的译配工作空间" = "Set Up Your Dubbing Workspace";
+"管理网络、模型服务与处理能力" = "Manage networking, model providers, and processing capabilities";
+"界面外观" = "Appearance";
+"浅色" = "Light";
+"深色" = "Dark";
+"检查配置" = "Check Settings";
+"%lld 个任务 · 进度与结果一目了然" = "%lld jobs · Track progress and results";
+"%lld 部视频 · 随时重温中文版" = "%lld videos · Ready to watch in Chinese";
+"%lld 个频道 · 追踪你喜欢的内容" = "%lld channels · Follow your favorites";
+"继续观看 · %@" = "Continue watching · %@";
+"正在%@" = "%@ in progress";
+"运行环境" = "Runtime Dependencies";
+"缺少 ffmpeg / ffprobe，处理视频前请先安装。" = "ffmpeg / ffprobe are missing. Install them before processing videos.";
+"查看运行环境" = "View Dependencies";
+"已安装" = "Installed";
+"未安装" = "Not Installed";
+"安装命令：brew install ffmpeg" = "Install: brew install ffmpeg";
+"语音识别模型会在首次使用时自动下载；配音密钥请在模型提供商中配置。" = "Speech recognition models download on first use. Configure voice API keys under Model Providers.";
+
+"YouTube 会话" = "YouTube session";
+
+"Cookie 文件" = "Cookie file";
+
+"选择 cookies.txt…" = "Choose cookies.txt…";
+
+"清除" = "Clear";
+
+"导入 Netscape 格式的 YouTube Cookie；遇到登录或反机器人验证时使用。Cookie 内容保留在原文件中。" = "Import YouTube cookies in Netscape format for sign-in or bot verification. Cookie contents stay in the selected file.";

@@ -9,7 +9,8 @@ struct Ytb2ZHAppMain: App {
     var body: some Scene {
         WindowGroup("ytb2zh 实时译配") {
             ContentView()
-                .frame(minWidth: 1080, minHeight: 700)
+                .frame(minWidth: 1000, minHeight: 700)
+                .tint(AppTheme.accent)
         }
         .windowStyle(.automatic)
     }
@@ -22,7 +23,7 @@ enum AppPage: String, CaseIterable, Identifiable {
     case library = "媒体库"
     case subscriptions = "订阅"
     case jobs = "任务中心"
-    case settings = "转换设置"
+    case settings = "视频转换"
     case app = "应用设置"
 
     var id: String { rawValue }
@@ -39,6 +40,7 @@ enum AppPage: String, CaseIterable, Identifiable {
 }
 
 struct ContentView: View {
+    @AppStorage("appAppearance") private var appearance = "system"
     @State private var page: AppPage = .player
     @State private var selectedTemplate: TemplateStore.Entry?
     @State private var workingProfile: Profile = .balanced
@@ -55,10 +57,8 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            SidebarView(page: $page, selected: $selectedTemplate,
-                        refresh: $refreshTemplates, templateStore: templateStore,
-                        onSelectTemplate: requestLoad, onDeleteTemplate: deleteTemplate)
-                .navigationSplitViewColumnWidth(min: 210, ideal: 240)
+            SidebarView(page: $page)
+                .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 250)
         } detail: {
             switch page {
             case .player:
@@ -78,12 +78,17 @@ struct ContentView: View {
                              templateStore: templateStore, job: $job,
                              baselineProfile: $baselineProfile,
                              hasUnsavedChanges: hasUnsavedChanges,
-                             onSelectTemplate: requestLoad)
-                    .navigationTitle("转换设置")
+                             onSelectTemplate: requestLoad, onDeleteTemplate: deleteTemplate)
+                    .navigationTitle("视频转换")
             case .app:
                 AppSettingsView()
                     .navigationTitle("应用设置")
             }
+        }
+        .background(AppTheme.canvas)
+        .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
+        .onReceive(NotificationCenter.default.publisher(for: .ytb2zhNavigate)) { note in
+            if let target = note.object as? AppPage { page = target }
         }
         .onReceive(NotificationCenter.default.publisher(for: .ytb2zhResumeJob)) { note in
             guard let req = note.object as? ResumeRequest else { return }
@@ -164,86 +169,36 @@ struct ContentView: View {
 
 struct SidebarView: View {
     @Binding var page: AppPage
-    @Binding var selected: TemplateStore.Entry?
-    @Binding var refresh: UUID
-    let templateStore: TemplateStore
-    let onSelectTemplate: (TemplateStore.Entry) -> Bool
-    let onDeleteTemplate: (TemplateStore.Entry) -> Void
-    @State private var toDelete: TemplateStore.Entry?
-
     var body: some View {
         List(selection: $page) {
             Section {
-                ForEach([AppPage.player, .library, .subscriptions, .jobs]) { p in
+                ForEach([AppPage.player, .library, .subscriptions, .settings, .jobs]) { p in
                     Label(L(p.rawValue), systemImage: p.icon).tag(p)
                 }
             }
-            Section("高级") {
-                Label(L(AppPage.settings.rawValue), systemImage: AppPage.settings.icon).tag(AppPage.settings)
+            Section("偏好设置") {
                 Label(L(AppPage.app.rawValue), systemImage: AppPage.app.icon).tag(AppPage.app)
             }
-            Section("模板起点（点击载入到转换设置）") {
-                ForEach(templateStore.all()) { entry in
-                    templateRow(entry)
-                }
-            }
         }
-        .id(refresh)
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom) {
-            Text("模板决定引擎组合与参数；调整后可右上角「模板 → 另存为模板」；用户模板可右键删除")
-                .font(.caption2).foregroundStyle(.secondary)
-                .padding(8)
-        }
-        .confirmationDialog("删除模板「\(toDelete?.profile.name ?? "")」？",
-                            isPresented: Binding(get: { toDelete != nil },
-                                                 set: { if !$0 { toDelete = nil } }),
-                            titleVisibility: .visible,
-                            presenting: toDelete) { entry in
-            Button("删除", role: .destructive) { onDeleteTemplate(entry) }
-            Button("取消", role: .cancel) { }
-        } message: { _ in
-            Text("删除后不可恢复；内置模板无法删除。")
-        }
-    }
-
-    @ViewBuilder
-    private func templateRow(_ entry: TemplateStore.Entry) -> some View {
-        Button {
-            onSelectTemplate(entry)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: entry.location == .builtin ? "lock.fill" : "person.crop.circle")
-                    .foregroundStyle(entry.location == .builtin ? Color.secondary : Color.blue)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(entry.profile.name)
-                    if !entry.profile.blurb.isEmpty {
-                        Text(entry.profile.blurb)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
+        .safeAreaInset(edge: .top) {
+            HStack(spacing: 10) {
+                Image(systemName: "play.rectangle.on.rectangle.fill")
+                    .foregroundStyle(.white).padding(9)
+                    .background(AppTheme.accent.gradient, in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("ytb2zh").font(.headline)
+                    Text("让视频说中文").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if entry.location == .user {
-                    // 尾部删除按钮（仅用户模板；内置模板不可删）
-                    Button {
-                        toDelete = entry
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("删除此用户模板")
-                }
-            }
+            }.padding(16)
         }
-        .buttonStyle(.plain)
-        .contextMenu {
-            if entry.location == .user {
-                Button("删除模板…", role: .destructive) { toDelete = entry }
-            }
+        .safeAreaInset(edge: .bottom) {
+            HStack {
+                Image(systemName: "sparkles").foregroundStyle(AppTheme.accent)
+                Text("场景预设在「视频转换」中选择")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(16)
         }
     }
 }
@@ -260,6 +215,8 @@ struct SettingsPane: View {
     @Binding var baselineProfile: Profile
     let hasUnsavedChanges: Bool
     let onSelectTemplate: (TemplateStore.Entry) -> Bool
+    let onDeleteTemplate: (TemplateStore.Entry) -> Void
+    @State private var templateToDelete: TemplateStore.Entry?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -285,52 +242,64 @@ struct SettingsPane: View {
             Divider()
 
             Form {
-                Section("视频源 · 后台完整转换（质量优先，完成入媒体库）") {
-                    TextField("YouTube URL", text: $videoURL, prompt: Text("粘贴视频 / 频道 / 播放列表地址"))
-                        .textFieldStyle(.roundedBorder)
-                    LabeledContent("预设") {
-                        Picker("", selection: $workingProfile.name) {
-                            ForEach(templateStore.all()) { e in
-                                Text(e.profile.name).tag(e.profile.name)
-                            }
-                        }
-                        .labelsHidden()
-                        .frame(width: 200)
-                        .onChange(of: workingProfile.name) { oldName, newName in
-                            guard oldName != newName,
-                                  let e = templateStore.all().first(where: { $0.profile.name == newName }) else { return }
-                            // 载入被拦截（弹了未保存确认）时回滚 Picker 显示，等用户确认后再真正切换
-                            if !onSelectTemplate(e) {
-                                workingProfile.name = oldName
-                            }
-                        }
-                    }
-                    // 当前模板说明（帮助新用户理解模板差异）
-                    if let e = templateStore.all().first(where: { $0.profile.name == workingProfile.name }),
-                       !e.profile.blurb.isEmpty {
-                        Text(e.profile.blurb)
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
-                    LabeledContent("代理 / 模型提供者") {
-                        Text(AppSettings.proxy.isEmpty
-                             ? "未设全局代理，用模板内置；点侧栏「应用设置」统一配置"
-                             : "全局代理 \(AppSettings.proxy)；在侧栏「应用设置」修改")
-                            .foregroundStyle(.secondary)
-                            .font(.callout)
+                Section {
+                    PageHeading(title: "把精彩内容，变成中文", subtitle: "选择视频与场景，译配完成后自动保存到媒体库")
+                    TextField("视频、频道或播放列表链接", text: $videoURL)
+                        .textFieldStyle(.roundedBorder).controlSize(.large)
+                    VideoSourcePreview(source: videoURL, proxy: AppSettings.effectiveProxy(fallback: workingProfile.download.proxy))
+                    if !videoURL.isEmpty {
+                        Label(VideoCatalogService.isLikelyListURL(videoURL) ? "频道与播放列表可在播放页展开浏览" : "视频链接已填入，可先试转 3 分钟", systemImage: "link")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-
-                Section {
-                    EnginePickerRow(profile: $workingProfile)
+                Section("选择场景") {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 12)], spacing: 12) {
+                        ForEach(templateStore.all()) { entry in
+                            Button { _ = onSelectTemplate(entry) } label: {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Image(systemName: entry.profile.engines["synthesize"] == "none" ? "captions.bubble" : "waveform")
+                                        Text(entry.profile.name).font(.headline)
+                                        Spacer()
+                                        if entry.profile.name == workingProfile.name {
+                                            Image(systemName: "checkmark.circle.fill")
+                                        }
+                                    }
+                                    Text(L(entry.profile.blurb)).font(.caption).foregroundStyle(.secondary)
+                                        .lineLimit(3).frame(maxWidth: .infinity, minHeight: 42, alignment: .topLeading)
+                                }
+                                .padding(14)
+                                .background(entry.profile.name == workingProfile.name ? AppTheme.accent.opacity(0.09) : AppTheme.surface,
+                                            in: RoundedRectangle(cornerRadius: 12))
+                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(entry.profile.name == workingProfile.name ? AppTheme.accent : Color.primary.opacity(0.08)))
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                if entry.location == .user {
+                                    Button("删除模板", role: .destructive) {
+                                        templateToDelete = entry
+                                    }
+                                }
+                            }
+                        }
+                    }.id(refreshTemplates)
                 }
 
                 ParameterPanel(profile: $workingProfile)
             }
             .formStyle(.grouped)
+            .frame(maxWidth: 1100)
+            .frame(maxWidth: .infinity)
 
             Divider()
 
             RunBar(videoURL: videoURL, profile: workingProfile, job: $job)
+        }
+        .confirmationDialog("删除这个模板？", isPresented: Binding(get: { templateToDelete != nil }, set: { if !$0 { templateToDelete = nil } }), presenting: templateToDelete) { entry in
+            Button("删除模板", role: .destructive) { onDeleteTemplate(entry) }
+            Button("取消", role: .cancel) { }
+        } message: { entry in
+            Text("删除「\(entry.profile.name)」后不可恢复。")
         }
     }
 }

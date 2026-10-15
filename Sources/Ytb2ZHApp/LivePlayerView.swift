@@ -19,6 +19,9 @@ struct LivePlayerView: View {
     /// 会话由外部持有（主窗口共享，切页不丢任务）；sheet 场景由包装视图持有
     @ObservedObject var session: LiveSession
     @State private var url = ""
+    @State private var originalMode = false
+    @FocusState private var entryFocused: Bool
+    @StateObject private var recent = LibraryModel()
     @State private var query = ""
     @State private var results: [CatalogVideo] = []
     @State private var searching = false
@@ -49,47 +52,38 @@ struct LivePlayerView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // —— 地址栏
-            HStack(spacing: 10) {
-                Image(systemName: "dot.radiowaves.left.and.right")
-                    .foregroundStyle(session.isRunning || session.converting ? .red : .secondary)
-                TextField("YouTube URL（或从下方结果点选）", text: $url)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(session.isRunning || session.converting || session.downloadingOriginal)
-                Button {
-                    if VideoCatalogService.isLikelyListURL(url) { browseFromField(); return }
-                    if session.isRunning { session.stop() } else { session.start(url: url, profile: profile) }
-                } label: {
-                    Label(session.isRunning ? "停止" : "实时中文",
-                          systemImage: session.isRunning ? "stop.fill" : "play.fill")
+        ScrollView {
+        VStack(spacing: 18) {
+            VStack(alignment: .leading, spacing: 18) {
+                PageHeading(title: "看世界，听中文", subtitle: "粘贴视频链接，或搜索你感兴趣的内容")
+                HStack(spacing: 12) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(AppTheme.accent)
+                    TextField("视频链接、频道、播放列表或 YouTube 关键词", text: $url)
+                        .textFieldStyle(.plain).focused($entryFocused)
+                        .onSubmit(openEntry)
+                        .disabled(session.isRunning || session.converting || session.downloadingOriginal)
+                    if searching { ProgressView().controlSize(.small) }
+                    Button(action: openEntry) {
+                        Label(session.isRunning ? "停止处理" : "开始", systemImage: session.isRunning ? "stop.fill" : "arrow.right")
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .disabled(!session.isRunning && (url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || searching || session.converting || session.downloadingOriginal))
                 }
-                .buttonStyle(.borderedProminent)
-                .help("边处理边播的中文字幕/配音版（处理约 4x 实时，跑在播放前面）；粘贴播放列表链接会自动转为浏览")
-                Button {
-                    if VideoCatalogService.isLikelyListURL(url) { browseFromField(); return }
-                    session.startOriginal(url: url, profile: profile)
-                } label: {
-                    Label("原声播放", systemImage: "waveform")
+                .padding(14).background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.08)))
+                HStack {
+                    Picker("播放模式", selection: $originalMode) {
+                        Text("中文译配").tag(false)
+                        Text("原声播放").tag(true)
+                    }.pickerStyle(.segmented).frame(width: 230)
+                    Text(originalMode ? "先看原片，随时切换中文配音" : "边处理边播放，生成中文字幕与配音")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { entryFocused = true } label: { Text("⌘L").font(.caption) }
+                        .buttonStyle(.plain).keyboardShortcut("l", modifiers: .command)
+                        .help("定位到视频与搜索输入框")
                 }
-                .buttonStyle(.bordered)
-                .disabled(session.isRunning || session.converting || session.downloadingOriginal
-                          || url.trimmingCharacters(in: .whitespaces).isEmpty)
-                .help("先只下载并播放原片；播放中可在播放器下方一键切换到中文配音")
-            }
-            .padding(EdgeInsets(top: 12, leading: 16, bottom: 6, trailing: 16))
-
-            // —— 搜索浏览
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("搜索 YouTube 关键词 / 粘贴频道或播放列表链接展开浏览", text: $query)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(search)
-                if searching { ProgressView().controlSize(.small) }
-                Button("搜索", action: search)
-                    .disabled(searching || query.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            .padding(.horizontal, 16)
+            }.padding(24)
 
             if !searchError.isEmpty {
                 Text(searchError).font(.caption).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading)
@@ -112,11 +106,9 @@ struct LivePlayerView: View {
                     }
                     .padding(.horizontal, 16)
                 }
-                .frame(height: 150)
+                .frame(height: 205)
                 .padding(.vertical, 8)
             }
-
-            Divider()
 
             // —— 播放器
             if let player = session.player {
@@ -124,28 +116,49 @@ struct LivePlayerView: View {
                     .aspectRatio(16 / 9, contentMode: .fit)
                     .frame(maxWidth: .infinity)
             } else {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(.quaternary.opacity(0.4))
-                    VStack(spacing: 8) {
-                        if session.isRunning || session.downloadingOriginal {
-                            ProgressView()
-                            Text(session.downloadingOriginal
-                                 ? "下载原声中，完成后立即播放\n（看过的视频会直接秒播缓存）"
-                                 : "准备中：下载 → 转录 → 语义切分完成、首个配音分片生成后自动开播\n看过的视频会用缓存直接重播")
-                                .font(.callout).foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                        } else {
-                            Image(systemName: "tv").font(.largeTitle).foregroundStyle(.secondary)
-                            Text("输入视频地址或搜索点选开始；播放列表会展开成可点选的封面墙，\n先看原声、再一键切换中文配音")
-                                .font(.callout).foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                        }
-                    }
+                if session.isRunning || session.downloadingOriginal {
+                    VStack(spacing: 18) {
+                        ProgressView().controlSize(.large)
+                        Text(session.downloadingOriginal ? "正在准备原声视频" : "正在准备中文译配")
+                            .font(.title2.weight(.semibold))
+                        Text("准备好后自动播放，你可以切换页面，处理会继续进行。")
+                            .font(.callout).foregroundStyle(.secondary)
+                        ProgressView(value: session.progress).frame(maxWidth: 350)
+                    }.frame(maxWidth: .infinity, minHeight: 260)
+                        .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 20))
+                        .padding(.horizontal, 24)
+                } else {
+                    AppEmptyState(icon: "play.tv", title: "从一个视频开始", message: "选择中文译配或原声播放，在上方输入链接。也可以输入关键词，发现感兴趣的视频。", actionTitle: "粘贴视频链接") {
+                        if let value = NSPasteboard.general.string(forType: .string) { url = value }
+                        entryFocused = true
+                    }.frame(minHeight: 260)
                 }
-                .aspectRatio(16 / 9, contentMode: .fit)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 16)
+                if !recent.items.isEmpty {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Text("最近完成").font(.headline)
+                            Spacer()
+                            Button("查看媒体库") { navigate(to: .library) }.buttonStyle(.plain)
+                        }
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200))], spacing: 16) {
+                            ForEach(Array(recent.items.prefix(4))) { item in
+                                Button {
+                                    url = item.url
+                                    let saved = JobStore().loadProfileSnapshot(id: item.jobID) ?? profile
+                                    if originalMode { session.startOriginal(url: item.url, profile: saved) }
+                                    else { session.start(url: item.url, profile: saved) }
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        ThumbImage(url: item.thumbnailURL?.absoluteString)
+                                            .frame(height: 112).clipped().clipShape(RoundedRectangle(cornerRadius: 10))
+                                        Text(item.title).font(.callout.weight(.medium)).lineLimit(2)
+                                        Text(PlaybackHistory.position(for: item.url) > 5 ? "继续观看 · \(Self.mmss(PlaybackHistory.position(for: item.url)))" : (item.channel ?? "中文版已就绪")).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }.buttonStyle(.plain).modifier(MediaCardStyle())
+                            }
+                        }
+                    }.padding(24)
+                }
             }
 
             // —— 原声 / 中文配音 切换条（播放中随时切换）
@@ -166,12 +179,13 @@ struct LivePlayerView: View {
                     .id(player)
             }
 
-            Divider()
-
             // —— 状态区
-            statusBar
+            if session.player != nil || session.isRunning || session.downloadingOriginal || !session.errorText.isEmpty { statusBar }
         }
+        }
+        .background(AppTheme.canvas)
         .onAppear {
+            recent.reload()
             if let u = autoStartURL, session.player == nil, !session.isRunning, !session.finished {
                 session.start(url: u, profile: profile)
             }
@@ -180,6 +194,21 @@ struct LivePlayerView: View {
         .onChange(of: session.finished) { _, _ in refreshStatuses() }
         .onChange(of: session.chineseReady) { _, _ in refreshStatuses() }
         .onDisappear { session.player?.pause() }   // 切页暂停播放，但处理任务继续跑
+    }
+
+    private func openEntry() {
+        if session.isRunning { session.stop(); return }
+        let input = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty else { return }
+        guard !session.converting, !session.downloadingOriginal, !searching else { return }
+        if VideoCatalogService.isLikelyListURL(input) { browseFromField(); return }
+        if let parsed = URL(string: input), ["https", "http"].contains(parsed.scheme?.lowercased() ?? "") {
+            if originalMode { session.startOriginal(url: input, profile: profile) }
+            else { session.start(url: input, profile: profile) }
+        } else {
+            query = input
+            search()
+        }
     }
 
     // MARK: 子视图与动作
@@ -310,7 +339,11 @@ struct LivePlayerView: View {
             }
             if !session.errorText.isEmpty {
                 Label(L10n.tr(session.errorText), systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red).font(.callout)
+                    .foregroundStyle(.red).font(.callout).textSelection(.enabled)
+                HStack {
+                    Button("重试") { openEntry() }.disabled(url.isEmpty || session.isRunning || session.converting || session.downloadingOriginal)
+                    Button("检查配置") { navigate(to: .app) }
+                }
             }
             if session.finished {
                 Label(session.mode == .original
@@ -393,12 +426,12 @@ struct LivePlayerView: View {
 
     /// 点卡片：已有中文版 → 中文秒播；否则原声即载即播 + 可切换
     private func smartPlay(_ v: CatalogVideo) {
+        guard !session.isRunning, !session.converting, !session.downloadingOriginal else { return }
         url = v.url
-        if statuses[v.url] == .chineseReady
-            || LiveSession.findReplay(url: v.url, profile: profile) != nil {
-            session.start(url: v.url, profile: profile)
-        } else {
+        if originalMode {
             session.startOriginal(url: v.url, profile: profile)
+        } else {
+            session.start(url: v.url, profile: profile)
         }
     }
 
@@ -448,6 +481,8 @@ struct LivePlayerView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .modifier(MediaCardStyle())
+        .disabled(session.isRunning || session.converting || session.downloadingOriginal)
         .contextMenu {
             Button {
                 url = v.url
@@ -514,6 +549,7 @@ final class LiveSession: ObservableObject {
     private var timeObserver: Any?
     private var cues: [SrtCue] = []
     private var watchedSeconds: Double = 0
+    private var lastSavedPosition: Double = -10
     private var liveToken: String?
     private var activeJobID: String?
     private var activeURL = ""
@@ -797,6 +833,7 @@ final class LiveSession: ObservableObject {
         progress = 0
         totalSeconds = ffprobeDuration(file) ?? 0
         player = AVPlayer(url: file)
+        restorePosition()
         startSubtitleTracking()
         startPlayback()
     }
@@ -817,13 +854,23 @@ final class LiveSession: ObservableObject {
         } else {
             player = AVPlayer(url: hit.finalVideo)   // 批量管线产物：成片直读
         }
+        restorePosition()
         startSubtitleTracking()
         startPlayback()
+    }
+
+    private func restorePosition() {
+        let saved = PlaybackHistory.position(for: activeURL)
+        if saved > 5, totalSeconds > saved + 5 {
+            player?.seek(to: CMTime(seconds: saved, preferredTimescale: 600))
+            watchedSeconds = saved
+        }
     }
 
     private func reset() {
         runTask?.cancel()
         runTask = nil
+        lastSavedPosition = -10
         errorText = ""; finished = false; detail = ""
         progress = 0; dubbedSeconds = 0; totalSeconds = 0
         stopSubtitleTracking()
@@ -930,7 +977,12 @@ final class LiveSession: ObservableObject {
     }
 
     private func tick(at t: Double) {
+        guard t.isFinite, t >= 0 else { return }
         watchedSeconds = t
+        if player?.rate ?? 0 > 0, t >= 5, abs(t - lastSavedPosition) >= 5 {
+            PlaybackHistory.save(t, for: activeURL, duration: totalSeconds)
+            lastSavedPosition = t
+        }
         if mode == .chinese {
             currentSubtitle = cues.first(where: { $0.contains(t) })?.text ?? ""
         } else if !currentSubtitle.isEmpty {

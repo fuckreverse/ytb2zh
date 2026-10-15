@@ -119,6 +119,18 @@ struct RunBar: View {
     let videoURL: String
     let profile: Profile
     @Binding var job: PipelineJob?
+    @StateObject private var emptyJob = PipelineJob()
+
+    var body: some View {
+        RunBarContent(videoURL: videoURL, profile: profile, job: $job, observedJob: job ?? emptyJob)
+    }
+}
+
+private struct RunBarContent: View {
+    let videoURL: String
+    let profile: Profile
+    @Binding var job: PipelineJob?
+    @ObservedObject var observedJob: PipelineJob
 
     var body: some View {
         VStack(spacing: 0) {
@@ -133,6 +145,7 @@ struct RunBar: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(disabled)
                 .help(disabledHint)
+                .keyboardShortcut(.return, modifiers: .command)
 
                 // 两段式：先跑到翻译停下，人工审核确认后再在任务中心继续转换
                 Button {
@@ -141,7 +154,7 @@ struct RunBar: View {
                     j.start(url: videoURL, profile: profile, jobID: nil,
                             stepFilter: [.download, .separate, .transcribe, .segment, .summarize, .translate])
                 } label: {
-                    Label("生成译文（先审核）", systemImage: "text.badge.checkmark")
+                    Label("先翻译并审核", systemImage: "text.badge.checkmark")
                 }
                 .buttonStyle(.bordered)
                 .disabled(disabled)
@@ -183,12 +196,33 @@ struct RunBar: View {
             }
             .padding(12)
 
+            if SidecarPaths.which("ffmpeg") == nil || SidecarPaths.which("ffprobe") == nil {
+                HStack {
+                    Label("缺少 ffmpeg / ffprobe，处理视频前请先安装。", systemImage: "wrench.and.screwdriver")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("查看运行环境") { navigate(to: .app) }
+                }.padding(.horizontal, 16).padding(.bottom, 10)
+            }
+            if needsVoiceSetup {
+                HStack {
+                    Label("百炼配音尚未配置密钥，可在应用设置中配置，或在高级设置中选择其他配音方式。", systemImage: "key")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("配置配音") { navigate(to: .app) }
+                }.padding(.horizontal, 16).padding(.bottom, 12)
+            }
             if let job {
                 PipelineProgressView(job: job)
                     .frame(maxHeight: 220)
             }
         }
         .background(.bar)
+    }
+
+    private var needsVoiceSetup: Bool {
+        let applied = AppSettings.applied(profile)
+        return applied.engines[StepID.synthesize.rawValue] == "bailian" && applied.synth.apiKey.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     private var disabled: Bool {
@@ -206,6 +240,7 @@ struct PipelineProgressView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 210))], alignment: .leading, spacing: 12) {
             ForEach(StepID.allCases, id: \.self) { step in
                 HStack {
                     Image(systemName: icon(for: step))
@@ -223,8 +258,9 @@ struct PipelineProgressView: View {
                     }
                 }
             }
+            }
             if let err = job.error {
-                Text(err).font(.caption).foregroundStyle(.red)
+                Label(err, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.red).textSelection(.enabled)
             }
         }
         .padding(.horizontal, 12)

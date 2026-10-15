@@ -22,6 +22,8 @@ struct AppSettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            PageHeading(title: "设置你的译配工作空间", subtitle: "管理网络、模型服务与处理能力")
+                .padding(24)
             Picker("", selection: $tab) {
                 ForEach(Tab.allCases) { t in
                     Text(L(t.rawValue)).tag(t)
@@ -40,6 +42,7 @@ struct AppSettingsView: View {
             case .assign: AssignTab(store: store)
             }
         }
+        .background(AppTheme.canvas)
         .navigationTitle("应用设置")
     }
 }
@@ -47,6 +50,7 @@ struct AppSettingsView: View {
 // MARK: - 分页 1：网络设置
 
 private struct NetworkTab: View {
+    @AppStorage("appAppearance") private var appearance = "system"
     @AppStorage(AppSettings.proxyKey) private var proxy = ""
     @AppStorage("youtubeCookieFile") private var youtubeCookieFile = ""
     @AppStorage("youtubeCookieSource") private var youtubeCookieSource = "netscape"
@@ -67,6 +71,11 @@ private struct NetworkTab: View {
     var body: some View {
         Form {
             Section("通用") {
+                Picker("界面外观", selection: $appearance) {
+                    Text("跟随系统").tag("system")
+                    Text("浅色").tag("light")
+                    Text("深色").tag("dark")
+                }
                 LabeledContent("界面语言") {
                     Picker("", selection: $langSelection) {
                         Text("跟随系统").tag("system")
@@ -93,6 +102,21 @@ private struct NetworkTab: View {
                 }
             }
 
+            Section("运行环境") {
+                ForEach(["ffmpeg", "ffprobe"], id: \.self) { tool in
+                    LabeledContent(tool) {
+                        if SidecarPaths.which(tool) != nil {
+                            Label("已安装", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                        } else {
+                            Label("未安装", systemImage: "exclamationmark.circle").foregroundStyle(.orange)
+                        }
+                    }
+                }
+                Text("安装命令：brew install ffmpeg")
+                    .font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                Text("语音识别模型会在首次使用时自动下载；配音密钥请在模型提供商中配置。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("代理（留空 = 用各模板内置值）") {
                 LabeledContent("代理地址") {
                     TextField("http://127.0.0.1:7890", text: $proxy)

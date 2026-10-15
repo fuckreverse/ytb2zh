@@ -42,8 +42,12 @@ struct ParameterPanel: View {
         profile.engines[StepID.synthesize.rawValue] ?? "bailian"
     }
 
+    private var composeEngineID: String {
+        profile.engines[StepID.compose.rawValue] ?? "ffmpeg"
+    }
+
     var body: some View {
-        Section("语音合成") {
+        Section("配音音色") {
             synthEngineParams
             if synthEngineID != "none" {
                 sliderRow("合成语速", value: $profile.synth.rate,
@@ -52,7 +56,7 @@ struct ParameterPanel: View {
             }
         }
 
-        Section("翻译风格") {
+        Section("翻译效果") {
             LabeledContent("风格") {
                 Picker("", selection: $profile.translate.style) {
                     ForEach(TranslationStyle.allCases, id: \.self) { s in
@@ -82,13 +86,25 @@ struct ParameterPanel: View {
                 .frame(width: 220)
             }
             Toggle("启用术语表（翻译前提取/人工修订）", isOn: $profile.translate.useTerminology)
-            Toggle("自动扩译（填不满时间窗时扩写）", isOn: $profile.translate.autoExpand)
-            stepperRow("批次大小", value: $profile.translate.batchSize, in: 4...40, hint: "每批翻译条数")
-            stepperRow("并发批次", value: $profile.translate.concurrency, in: 1...8, hint: "")
+
+        }
+
+        Section("字幕与声音") {
+            Toggle("中英双语字幕", isOn: $profile.compose.bilingualSubtitles)
+            if composeEngineID != "sidecar" {
+                Toggle("保留背景音乐（需开启人声分离）", isOn: $profile.compose.keepBGM)
+                Toggle("保留原声并降低音量", isOn: $profile.compose.keepOriginalAudio)
+            }
         }
 
         Section {
             DisclosureGroup(isExpanded: $advancedExpanded) {
+                EnginePickerRow(profile: $profile)
+                groupHeader("处理速度与翻译细节")
+                Toggle("自动扩译（填不满时间窗时扩写）", isOn: $profile.translate.autoExpand)
+                stepperRow("批次大小", value: $profile.translate.batchSize, in: 4...40, hint: "每批翻译条数")
+                stepperRow("并发批次", value: $profile.translate.concurrency, in: 1...8, hint: "")
+                stepperRow("配音并发", value: $profile.synth.rps, in: 1...5, hint: "根据服务限流调整")
                 groupHeader("对齐调度（音画同步手感）")
                 sliderRow("漂移上限", value: $profile.schedule.driftCap, in: 0.5...3.0, step: 0.1,
                           hint: "配音最多领先画面（秒）")
@@ -110,27 +126,32 @@ struct ParameterPanel: View {
                           hint: "超过即强制切分")
 
                 groupHeader("视频合成")
-                sliderRow("字幕字号", value: $profile.compose.subtitleFontSize, in: 10...28, step: 1, hint: "")
-                sliderRow("字幕底边距", value: $profile.compose.subtitleMarginV, in: 10...80, step: 2, hint: "")
+                if composeEngineID == "sidecar" {
+                    Text("旁挂字幕模式：字幕不烧录、视频不重编码，以下仅保留影响 SRT 文本的参数")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                if composeEngineID != "sidecar" {
+                    sliderRow("字幕字号", value: $profile.compose.subtitleFontSize, in: 10...28, step: 1, hint: "")
+                    sliderRow("字幕底边距", value: $profile.compose.subtitleMarginV, in: 10...80, step: 2, hint: "")
+                }
                 sliderRow("单行字数上限", value: Binding(
                     get: { Double(profile.compose.subtitleMaxLength) },
                     set: { profile.compose.subtitleMaxLength = Int($0) }),
                     in: 16...90, step: 1, hint: "Netflix 标准：超长行自动二次拆分")
                 sliderRow("行长偏置", value: $profile.compose.subtitleTargetMultiplier, in: 1.0...2.0, step: 0.1,
                           hint: "1.2 = 预期行长 = 上限/1.2，越大切得越碎")
-                Toggle("中英双语字幕", isOn: $profile.compose.bilingualSubtitles)
-                sliderRow("配音增益", value: $profile.compose.dubGainDB, in: 0...10, step: 0.5, hint: "dB")
-                Toggle("保留 BGM（需人声分离引擎）", isOn: $profile.compose.keepBGM)
-                sliderRow("BGM 增益", value: $profile.compose.bgmGainDB, in: -12...3, step: 0.5,
-                          hint: "dB，负值压低伴奏")
-                Toggle("保留原声（闪避混入，未分离时用）", isOn: $profile.compose.keepOriginalAudio)
-                stepperRow("CRF", value: $profile.compose.crf, in: 14...30, hint: "越小越清晰越大")
+                if composeEngineID != "sidecar" {
+                    sliderRow("配音增益", value: $profile.compose.dubGainDB, in: 0...10, step: 0.5, hint: "dB")
+                    sliderRow("BGM 增益", value: $profile.compose.bgmGainDB, in: -12...3, step: 0.5,
+                              hint: "dB，负值压低伴奏")
+                    stepperRow("CRF", value: $profile.compose.crf, in: 14...30, hint: "越小越清晰越大")
+                }
             } label: {
-                Text("高级参数（对齐调度 · 语义切分 · 字幕混音）")
+                Text("高级参数 · 引擎、处理速度与字幕微调")
                     .foregroundStyle(advancedExpanded ? Color.accentColor : .primary)
             }
         } header: {
-            Text("微调（默认值已足够好，不确定别改）")
+            Text("高级设置 · 默认参数适合大多数视频")
         }
     }
 
@@ -175,7 +196,7 @@ struct ParameterPanel: View {
             Text("音色/模型在「应用设置 → 模型提供商」按能力配置")
                 .font(.callout).foregroundStyle(.secondary)
         case "none":
-            Text("当前模板不配音（仅字幕）；改用配音请在上方「语音合成」步选择引擎")
+            Text("当前模板不配音（仅字幕）；可在下方「高级参数 → 语音合成」选择配音方式")
                 .font(.callout).foregroundStyle(.secondary)
         default:
             // bailian（默认）：百炼音色 + 并发
@@ -191,7 +212,7 @@ struct ParameterPanel: View {
                 .labelsHidden()
                 .frame(width: 220)
             }
-            stepperRow("并发数", value: $profile.synth.rps, in: 1...5, hint: "百炼限流 RPS=3")
+
         }
     }
 
