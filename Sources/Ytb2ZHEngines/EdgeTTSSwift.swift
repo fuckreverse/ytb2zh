@@ -71,10 +71,12 @@ enum EdgeTTSWire {
             .replacingOccurrences(of: ">", with: "&gt;")
     }
 
-    static func ssml(voice: String, escapedText: String) -> String {
-        "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>"
+    /// SSML 文档；rate≠1.0 时经 prosody rate 兑现原生语速（+20% = 快 20%）
+    static func ssml(voice: String, escapedText: String, rate: Double = 1.0) -> String {
+        let pct = String(format: "%+.0f%%", (rate - 1.0) * 100)
+        return "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>"
             + "<voice name='\(voice)'>"
-            + "<prosody pitch='+0Hz' rate='+0%' volume='+0%'>"
+            + "<prosody pitch='+0Hz' rate='\(pct)' volume='+0%'>"
             + escapedText
             + "</prosody></voice></speak>"
     }
@@ -90,12 +92,13 @@ enum EdgeTTSWire {
     }
 
     /// 第二条消息：SSML 合成请求
-    static func ssmlMessage(requestID: String, timestamp: String, voice: String, escapedText: String) -> String {
+    static func ssmlMessage(requestID: String, timestamp: String, voice: String, escapedText: String,
+                            rate: Double = 1.0) -> String {
         "X-RequestId:\(requestID)\r\n"
             + "Content-Type:application/ssml+xml\r\n"
             + "X-Timestamp:\(timestamp)\r\n"
             + "Path:ssml\r\n\r\n"
-            + ssml(voice: voice, escapedText: escapedText)
+            + ssml(voice: voice, escapedText: escapedText, rate: rate)
     }
 
     /// 文本帧 Path 提取（头部以 "\r\n\r\n" 结束）
@@ -184,10 +187,11 @@ struct EdgeTTSClient {
     var timeoutSeconds: TimeInterval = 60
 
     /// 合成整段文本：超长按 4096 字节切块顺序合成后拼接（mp3 流可直接拼接）
-    func synthesize(text: String, voice: String) async throws -> Data {
+    func synthesize(text: String, voice: String, rate: Double = 1.0) async throws -> Data {
         var all = Data()
         for chunk in EdgeTTSWire.chunks(of: EdgeTTSWire.sanitize(text)) {
-            all.append(try await synthesizeChunk(escapedText: EdgeTTSWire.escapeXML(chunk), voice: voice))
+            all.append(try await synthesizeChunk(escapedText: EdgeTTSWire.escapeXML(chunk),
+                                                 voice: voice, rate: rate))
         }
         guard !all.isEmpty else {
             throw EngineError.engineFailure("Edge TTS 未返回音频")
@@ -196,7 +200,7 @@ struct EdgeTTSClient {
     }
 
     /// 单块合成：WS 连接 → speech.config → ssml → 收二进制音频帧至 turn.end
-    private func synthesizeChunk(escapedText: String, voice: String) async throws -> Data {
+    private func synthesizeChunk(escapedText: String, voice: String, rate: Double) async throws -> Data {
         let config = URLSessionConfiguration.ephemeral
         let proxyDict = EdgeTTSProxy.dictionary(from: proxy)
         if !proxyDict.isEmpty { config.connectionProxyDictionary = proxyDict }
@@ -223,7 +227,8 @@ struct EdgeTTSClient {
             requestID: EdgeTTSWire.connectID(),
             timestamp: EdgeTTSWire.jsTimestamp(),
             voice: voice,
-            escapedText: escapedText)))
+            escapedText: escapedText,
+            rate: rate)))
 
         func receiveLoop() async throws {
             while true {

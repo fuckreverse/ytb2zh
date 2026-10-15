@@ -229,10 +229,17 @@ public final class Pipeline: Sendable {
 
         // 6. 语音合成（子句级，带缓存；支持单元级音色覆盖）
         let clauseTexts = units.map { splitClauses($0.zh) }
-        let cacheDir = store.clauseCache(jobID)
+        // 语速：原生支持的引擎直接以目标语速合成（缓存按语速分目录，改语速不污染旧产物）；
+        // 不支持的引擎忽略它，由调度层把语速折算进 atempo（schedule.rate，见下）
+        let synthRate = profile.synth.effectiveRate
+        let nativeRate = engines.synthesizer.supportsRateControl
+        let cacheDir = store.clauseCache(jobID, rate: synthRate)
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
         if shouldRun(.synthesize) {
             emit(.stepStarted(.synthesize)); store.setStep(jobID, .synthesize, .running)
+            if abs(synthRate - 1.0) >= 0.001 && !nativeRate {
+                emit(.log("合成语速 \(String(format: "%.2f", synthRate))×：当前 TTS 引擎（\(engines.synthesizer.descriptor.name)）不支持原生变速，改由对齐层 atempo 兑现（音质略降）"))
+            }
             do {
                 var total = 0
                 for (ui, unit) in units.enumerated() where !clauseTexts[ui].isEmpty {
@@ -284,8 +291,11 @@ public final class Pipeline: Sendable {
         var plan = SchedulePlan.empty
         if shouldRun(.schedule) {
             emit(.stepStarted(.schedule)); store.setStep(jobID, .schedule, .running)
+            var schedOpts = profile.schedule
+            // 原生语速引擎：合成产物已含目标语速 → 不叠加；否则 atempo 兜底兑现 synth.rate
+            schedOpts.rate = nativeRate ? 1.0 : synthRate
             plan = engines.scheduler.schedule(units: units, clauseDurations: clauseDurations,
-                                              options: profile.schedule)
+                                              options: schedOpts)
             try store.writeJSON(plan, to: store.planJSON(jobID))
             store.setStep(jobID, .schedule, .done)
             emit(.stepFinished(.schedule, [

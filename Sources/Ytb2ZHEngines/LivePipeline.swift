@@ -115,7 +115,9 @@ public struct LivePipeline: Sendable {
 
             // —— 窗口循环
             let windows = Self.planWindows(units: units)
-            let clauseCacheDir = store.clauseCache(jobID)
+            // 语速分目录缓存（与批量管线互通）：原生变速引擎直接以目标语速合成；
+            // 不支持的由调度层 atempo 兜底（见下方 schedOpts.rate）
+            let clauseCacheDir = store.clauseCache(jobID, rate: profile.synth.effectiveRate)
             try fm.createDirectory(at: clauseCacheDir, withIntermediateDirectories: true)
             let splitter = ClauseTextSplitter()
 
@@ -192,8 +194,12 @@ public struct LivePipeline: Sendable {
                 }
 
                 // 3) 调度：窗口内独立漂移调度（绝对时间落位），再整体平移防止与上一窗口重叠
+                var schedOpts = profile.schedule
+                // 引擎原生支持语速 → 合成产物已含目标语速，不叠加；否则把语速折算进 atempo
+                schedOpts.rate = engines.synthesizer.supportsRateControl
+                    ? 1.0 : profile.synth.effectiveRate
                 var plan = engines.scheduler.schedule(
-                    units: winUnits, clauseDurations: clauseDurations, options: profile.schedule)
+                    units: winUnits, clauseDurations: clauseDurations, options: schedOpts)
                 if let first = plan.placements.first,
                    first.at < globalPrevEnd + profile.schedule.unitGap {
                     let delta = globalPrevEnd + profile.schedule.unitGap - first.at
@@ -350,7 +356,7 @@ public struct LivePipeline: Sendable {
                                "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", seg.path])
             } else {
                 try runFFmpeg(["-y", "-v", "error", "-i", src.path,
-                               "-filter:a", String(format: "atempo=%.4f", pl.atempo),
+                               "-filter:a", atempoChain(pl.atempo),
                                "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", seg.path])
             }
             lines.append("file '\(seg.path)'")

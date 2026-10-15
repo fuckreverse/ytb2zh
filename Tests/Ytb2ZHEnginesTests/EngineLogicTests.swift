@@ -64,6 +64,79 @@ final class DriftSchedulerTests: XCTestCase {
         XCTAssertEqual(plan.maxLead, plan.unitSchedules.map(\.lead).max()!, accuracy: 1e-9)
         XCTAssertGreaterThanOrEqual(plan.interUnitWait, 0)
     }
+
+    // MARK: - 调度层叠加语速（schedule.rate：引擎不支持原生变速时的 atempo 兜底）
+
+    /// r=1.0 恒等：与历史行为逐位一致（守护上面所有黄金断言）
+    func testRateOneIsIdentity() {
+        let units = [SpeechUnit(start: 10, end: 20, en: "hello", zh: "你好世界")]
+        var o = opts
+        o.rate = 1.0
+        let p = DriftSchedulerEngine().schedule(units: units, clauseDurations: [[3.0]], options: o).placements[0]
+        XCTAssertEqual(p.duration, 3.0 * 1.15, accuracy: 1e-9)
+        XCTAssertEqual(p.atempo, 1.0 / 1.15, accuracy: 1e-9)
+    }
+
+    /// 溢出场景：atempo = rate × 基线 atempo，落位时长 = 基线 / rate
+    func testComposeSideRateFallbackOverflow() {
+        let units = [SpeechUnit(start: 0, end: 2, en: "a", zh: "测试")]
+        func plan(rate: Double) -> SchedulePlan {
+            var o = opts
+            o.rate = rate
+            return DriftSchedulerEngine().schedule(units: units, clauseDurations: [[6.0]], options: o)
+        }
+        let base = plan(rate: 1.0)
+        let fast = plan(rate: 1.2)
+        // avail=2.95，raw=6 → need≈2.07 超 fastMax，双双钳到 1.3 → atempo 比值恰为 rate
+        XCTAssertEqual(base.placements[0].atempo, 1.3, accuracy: 0.001)
+        XCTAssertEqual(fast.placements[0].atempo, 1.3 * 1.2, accuracy: 0.001)
+        XCTAssertEqual(fast.placements[0].duration, base.placements[0].duration / 1.2, accuracy: 0.001)
+    }
+
+    /// 富余场景：慢放封顶下 atempo = rate / slowMax
+    func testComposeSideRateFallbackSlack() {
+        let units = [SpeechUnit(start: 0, end: 4, en: "a", zh: "测试")]
+        var o = opts
+        o.rate = 0.5
+        let p = DriftSchedulerEngine().schedule(units: units, clauseDurations: [[1.0]], options: o).placements[0]
+        // 有效时长 2.0，avail=4.95，slack=2.95 → stretch 封顶 1.15 → atempo = 0.5/1.15（<0.5，需链式 atempo）
+        XCTAssertEqual(p.atempo, 0.5 / 1.15, accuracy: 0.001)
+        XCTAssertEqual(p.duration, 2.0 * 1.15, accuracy: 0.001)
+    }
+}
+
+// MARK: - TTS 原生语速能力位与 atempo 链式拆分
+
+final class TTSRateControlTests: XCTestCase {
+    /// 能力位矩阵：有原生变速机制的引擎必须报告 true；none 无音频恒 false
+    func testSupportsRateControlMatrix() {
+        let engines: [(String, any SpeechSynthesisEngine)] = [
+            ("bailian", BailianSynthEngine()),
+            ("openai-tts", OpenAITTSEngine()),
+            ("edge-tts", EdgeTTSEngine()),
+            ("local-say", LocalSayTTSEngine()),
+            ("sherpa-onnx", SherpaOnnxTTSEngine()),
+        ]
+        for (id, e) in engines {
+            XCTAssertTrue(e.supportsRateControl, "\(id) 应支持原生语速")
+        }
+        XCTAssertFalse(NullSynthEngine().supportsRateControl)
+    }
+
+    /// atempo 链式拆分：单实例越界（>2.0 或 <0.5）时各段乘积保持目标倍率
+    func testAtempoChain() {
+        XCTAssertEqual(atempoChain(.infinity), "atempo=1.0000")
+        XCTAssertEqual(atempoChain(-.infinity), "atempo=1.0000")
+        XCTAssertEqual(atempoChain(.nan), "atempo=1.0000")
+        XCTAssertEqual(atempoChain(1.0), "atempo=1.0000")
+        XCTAssertEqual(atempoChain(1.3), "atempo=1.3000")
+        XCTAssertEqual(atempoChain(2.0), "atempo=2.0000")
+        XCTAssertEqual(atempoChain(0.5), "atempo=0.5000")
+        // 语速 2.0 × fastMax 1.3 = 2.6 → 两段乘积 2.6
+        XCTAssertEqual(atempoChain(2.6), "atempo=2.0000,atempo=1.3000")
+        // 语速 0.5 × slowMax 1.15 ≈ 0.435 → 两段乘积 ≈0.435
+        XCTAssertEqual(atempoChain(0.5 / 1.15), "atempo=0.5000,atempo=0.8696")
+    }
 }
 
 final class PunctSegmentationTests: XCTestCase {

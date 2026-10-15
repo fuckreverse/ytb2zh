@@ -11,7 +11,7 @@ import Ytb2ZHCore
 public struct LocalSayTTSEngine: SpeechSynthesisEngine {
     public let descriptor = EngineDescriptor(
         "local-say", "macOS 语音合成（say）", "系统内置，零依赖，离线可用")
-    public var supportsRateControl: Bool { false }
+    public var supportsRateControl: Bool { true }
 
     public init() {}
 
@@ -31,12 +31,19 @@ public struct LocalSayTTSEngine: SpeechSynthesisEngine {
         let voice = options.localVoice.trimmingCharacters(in: .whitespaces).isEmpty
             ? "Tingting" : options.localVoice.trimmingCharacters(in: .whitespaces)
 
-        // 1) 写临时 AIFF（say 原生输出格式）
+        // 1) 写临时 AIFF（say 原生输出格式）；rate≠1.0 时按 180wpm 基线折算 -r
+        // （实测 1.2×→1.18× 近似线性；残余漂移由调度层 atempo 吸收）
         let aiff = cacheDir.appendingPathComponent("\(cacheKey).aiff")
         try? fm.removeItem(at: aiff)
         let sayPath = "/usr/bin/say"
+        var sayArgs = ["-v", voice]
+        let rate = options.effectiveRate
+        if abs(rate - 1.0) >= 0.001 {
+            sayArgs += ["-r", String(Int((180 * rate).rounded()))]
+        }
+        sayArgs += ["-o", aiff.path, text]
         let runner = ProcessRunner()
-        let r = try runner.run(sayPath, ["-v", voice, "-o", aiff.path, text])
+        let r = try runner.run(sayPath, sayArgs)
         guard r.code == 0, fm.fileExists(atPath: aiff.path) else {
             throw EngineError.engineFailure("say 合成失败：\(String(r.stderr.suffix(300)))")
         }
@@ -73,7 +80,7 @@ public struct SherpaOnnxTTSEngine: SpeechSynthesisEngine {
     public let descriptor = EngineDescriptor(
         "sherpa-onnx", "Sherpa-Onnx 离线 TTS（内嵌）",
         "进程内 vits 推理，零外部依赖；模型缺失自动下载（默认 theresa 中文女声约 170MB）")
-    public var supportsRateControl: Bool { false }
+    public var supportsRateControl: Bool { true }
 
     public init() {}
 
@@ -103,10 +110,11 @@ public struct SherpaOnnxTTSEngine: SpeechSynthesisEngine {
         let wav = cacheDir.appendingPathComponent("\(cacheKey).wav")
         try? fm.removeItem(at: wav)
         nonisolated(unsafe) let ttsHandle = tts
+        nonisolated(unsafe) let speed = Float(options.effectiveRate)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    try Self.generateSync(tts: ttsHandle, text: text, wav: wav)
+                    try Self.generateSync(tts: ttsHandle, text: text, wav: wav, speed: speed)
                     cont.resume()
                 } catch {
                     cont.resume(throwing: error)
@@ -131,9 +139,10 @@ public struct SherpaOnnxTTSEngine: SpeechSynthesisEngine {
     }
 
     /// 同步合成（vits C API 调用；运行在专用调度线程）
-    nonisolated private static func generateSync(tts: OpaquePointer, text: String, wav: URL) throws {
+    nonisolated private static func generateSync(tts: OpaquePointer, text: String, wav: URL,
+                                                 speed: Float) throws {
         // strdup 固定 C 字符串（utf8String 缓冲随临时对象释放，同调内使用虽安全但统一走 strdup）
-        guard let audio = SherpaOnnxOfflineTtsGenerate(tts, UnsafePointer(strdup(text)), 0, 1.0) else {
+        guard let audio = SherpaOnnxOfflineTtsGenerate(tts, UnsafePointer(strdup(text)), 0, speed) else {
             throw EngineError.engineFailure(
                 "Sherpa-Onnx 合成失败。请检查模型目录是否完整（model.onnx/tokens.txt/lexicon.txt/dict/）")
         }

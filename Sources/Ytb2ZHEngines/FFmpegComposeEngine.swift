@@ -54,7 +54,7 @@ public struct FFmpegComposeEngine: CompositionEngine {
                                "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", segWav.path])
             } else {
                 try runFFmpeg(["-y", "-v", "error", "-i", src.path,
-                               "-filter:a", String(format: "atempo=%.4f", atempo),
+                               "-filter:a", atempoChain(atempo),
                                "-ar", "24000", "-ac", "1", "-c:a", "pcm_s16le", segWav.path])
             }
             concatLines.append("file '\(segWav.path)'")

@@ -45,6 +45,11 @@ struct ParameterPanel: View {
     var body: some View {
         Section("语音合成") {
             synthEngineParams
+            if synthEngineID != "none" {
+                sliderRow("合成语速", value: $profile.synth.rate,
+                          in: SynthOptions.rateMin...SynthOptions.rateMax, step: 0.05,
+                          hint: "1.00 = 原始速度；支持原生变速的引擎直接以该语速合成，其余由对齐层微调兑现")
+            }
         }
 
         Section("翻译风格") {

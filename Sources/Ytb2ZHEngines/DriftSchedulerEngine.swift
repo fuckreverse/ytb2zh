@@ -39,7 +39,12 @@ public struct DriftSchedulerEngine: SchedulerEngine {
             }
 
             let n = durs.count
-            let raw = durs.reduce(0, +)
+            // 调度层叠加语速（引擎不支持原生变速时由 Pipeline 填入 synth.rate）：
+            // 先把合成时长折算成"目标语速下的有效时长"，富余/溢出判定与拉伸都基于它，
+            // 最终 atempo = rate / stretch（r=1.0 时与旧行为逐位一致：x/1.0 == x）。
+            let r = options.rate > 0.05 ? options.rate : 1.0
+            let effDurs = durs.map { $0 / r }
+            let raw = effDurs.reduce(0, +)
             var pauses = [Double](repeating: options.pauseMin, count: max(0, n - 1))
             var slack = avail - (raw + pauses.reduce(0, +))
             var stretch: Double = 1.0   // f：>1 慢放，<1 加速（作用在音频时长上）
@@ -67,8 +72,8 @@ public struct DriftSchedulerEngine: SchedulerEngine {
             var t = ns
             let clauseTexts = splitClauses(unit.zh)
             for k in 0..<n {
-                let dur = durs[k] * stretch
-                let atempo = 1.0 / stretch
+                let dur = effDurs[k] * stretch
+                let atempo = r / stretch
                 placements.append(Placement(
                     unitIndex: i, clauseIndex: k,
                     text: k < clauseTexts.count ? clauseTexts[k] : "",

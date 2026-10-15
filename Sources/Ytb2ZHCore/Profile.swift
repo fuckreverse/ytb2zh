@@ -215,6 +215,10 @@ public struct SynthOptions: Codable, Hashable, Sendable {
     public var model: String
     public var voice: String
     public var rps: Int   // 并发上限（百炼限流 3）
+    /// 合成语速倍率（1.0 = 原始速度，范围 0.5–2.0）。
+    /// 支持原生变速的引擎（见 supportsRateControl）直接以该语速合成，音质优于音频后处理；
+    /// 不支持的引擎忽略它，由调度层折算进 atempo 兑现。
+    public var rate: Double
     // OpenAI 兼容 TTS（engines.synthesize == "openai-tts" 时生效）
     public var compatBaseURL: String
     public var compatAPIKey: String
@@ -229,6 +233,15 @@ public struct SynthOptions: Codable, Hashable, Sendable {
     /// Sherpa-Onnx 模型目录（含 model.onnx、tokens.txt、dict/ 等）；空 = 未配置
     public var sherpaOnnxModelDir: String
 
+    /// 生效语速范围（GUI 滑块、钳制、文档共用）
+    public static let rateMin: Double = 0.5
+    public static let rateMax: Double = 2.0
+
+    /// 钳制后的生效语速：引擎与调度层统一读它，越界值静默钳到 [rateMin, rateMax]
+    public var effectiveRate: Double {
+        min(max(rate, SynthOptions.rateMin), SynthOptions.rateMax)
+    }
+
     public init(apiKey: String = "",
                 wsURL: String = "wss://llm-tj31icsrw8blnhj0.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference",
                 model: String = "qwen-audio-3.1-tts-flash",
@@ -238,19 +251,21 @@ public struct SynthOptions: Codable, Hashable, Sendable {
                 edgeVoice: String = "zh-CN-YunxiNeural",
                 edgeProxy: String = "http://127.0.0.1:7890",
                 localVoice: String = "Tingting",
-                sherpaOnnxModelDir: String = "") {
+                sherpaOnnxModelDir: String = "",
+                rate: Double = 1.0) {
         self.apiKey = apiKey; self.wsURL = wsURL; self.model = model
         self.voice = voice; self.rps = rps
         self.compatBaseURL = compatBaseURL; self.compatAPIKey = compatAPIKey
         self.compatTTSModel = compatTTSModel; self.edgeVoice = edgeVoice
         self.edgeProxy = edgeProxy
         self.localVoice = localVoice; self.sherpaOnnxModelDir = sherpaOnnxModelDir
+        self.rate = rate
     }
 
     private enum CodingKeys: String, CodingKey {
         case apiKey, wsURL, model, voice, rps
         case compatBaseURL, compatAPIKey, compatTTSModel, edgeVoice, edgeProxy
-        case localVoice, sherpaOnnxModelDir
+        case localVoice, sherpaOnnxModelDir, rate
     }
 
     public init(from decoder: Decoder) throws {
@@ -268,6 +283,7 @@ public struct SynthOptions: Codable, Hashable, Sendable {
         edgeProxy = try c.decodeIfPresent(String.self, forKey: .edgeProxy) ?? d.edgeProxy
         localVoice = try c.decodeIfPresent(String.self, forKey: .localVoice) ?? d.localVoice
         sherpaOnnxModelDir = try c.decodeIfPresent(String.self, forKey: .sherpaOnnxModelDir) ?? d.sherpaOnnxModelDir
+        rate = try c.decodeIfPresent(Double.self, forKey: .rate) ?? d.rate
     }
 }
 
@@ -280,13 +296,40 @@ public struct ScheduleOptions: Codable, Hashable, Sendable {
     public var slowMax: Double          // 语音最多拉长（1.15 = 慢放 15%）
     public var fastMax: Double          // 溢出时最多加速
     public var slidePreviewRange: Int   // GUI 预览只处理前 N 秒（0 = 全片）
+    /// 调度层叠加的音频变速倍率（Pipeline 按 TTS 引擎是否支持原生语速派生：
+    /// 支持 → 1.0（合成产物已含目标语速）；不支持 → 合成语速，由 atempo 兑现）。
+    /// 一般不由用户直接设置；想改语速请用 synth.rate。
+    public var rate: Double
+
     public init(driftCap: Double = 1.2, lagCap: Double = 0.8, unitGap: Double = 0.25,
                 pauseMin: Double = 0.25, pauseMax: Double = 1.3,
-                slowMax: Double = 1.15, fastMax: Double = 1.3, slidePreviewRange: Int = 0) {
+                slowMax: Double = 1.15, fastMax: Double = 1.3, slidePreviewRange: Int = 0,
+                rate: Double = 1.0) {
         self.driftCap = driftCap; self.lagCap = lagCap; self.unitGap = unitGap
         self.pauseMin = pauseMin; self.pauseMax = pauseMax
         self.slowMax = slowMax; self.fastMax = fastMax
         self.slidePreviewRange = slidePreviewRange
+        self.rate = rate
+    }
+
+    /// 自定义解码：旧模板 JSON 的 schedule 对象无 rate 键时取默认 1.0
+    /// （ synthesized decode 会因缺键直接抛错，破坏旧模板加载）
+    private enum CodingKeys: String, CodingKey {
+        case driftCap, lagCap, unitGap, pauseMin, pauseMax, slowMax, fastMax, slidePreviewRange, rate
+    }
+
+    public init(from decoder: Decoder) throws {
+        let d = ScheduleOptions()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        driftCap = try c.decodeIfPresent(Double.self, forKey: .driftCap) ?? d.driftCap
+        lagCap = try c.decodeIfPresent(Double.self, forKey: .lagCap) ?? d.lagCap
+        unitGap = try c.decodeIfPresent(Double.self, forKey: .unitGap) ?? d.unitGap
+        pauseMin = try c.decodeIfPresent(Double.self, forKey: .pauseMin) ?? d.pauseMin
+        pauseMax = try c.decodeIfPresent(Double.self, forKey: .pauseMax) ?? d.pauseMax
+        slowMax = try c.decodeIfPresent(Double.self, forKey: .slowMax) ?? d.slowMax
+        fastMax = try c.decodeIfPresent(Double.self, forKey: .fastMax) ?? d.fastMax
+        slidePreviewRange = try c.decodeIfPresent(Int.self, forKey: .slidePreviewRange) ?? d.slidePreviewRange
+        rate = try c.decodeIfPresent(Double.self, forKey: .rate) ?? d.rate
     }
 }
 

@@ -57,6 +57,20 @@ final class EdgeTTSTests: XCTestCase {
         XCTAssertTrue(m.hasSuffix("</voice></speak>"))
     }
 
+    func testSSMLRateProsody() {
+        // rate≠1.0 经 prosody rate 兑现原生语速（+20% = 快 20%）
+        let fast = EdgeTTSWire.ssml(voice: "v", escapedText: "你好", rate: 1.2)
+        XCTAssertTrue(fast.contains("<prosody pitch='+0Hz' rate='+20%' volume='+0%'>你好</prosody>"), fast)
+        let slow = EdgeTTSWire.ssml(voice: "v", escapedText: "你好", rate: 0.8)
+        XCTAssertTrue(slow.contains("rate='-20%'"), slow)
+        // 默认 1.0 与历史行为一致（+0%）
+        XCTAssertTrue(EdgeTTSWire.ssml(voice: "v", escapedText: "x").contains("rate='+0%'"))
+        // ssmlMessage 透传 rate
+        let m = EdgeTTSWire.ssmlMessage(requestID: "R", timestamp: "T", voice: "v",
+                                        escapedText: "x", rate: 1.5)
+        XCTAssertTrue(m.contains("rate='+50%'"), m)
+    }
+
     func testEscapeXMLAndSanitize() {
         XCTAssertEqual(EdgeTTSWire.escapeXML("a<b>&c"), "a&lt;b&gt;&amp;c")
         // 垂直制表符(11)与控制字符(1、31)替换为空格，\t(9)\n(10) 保留

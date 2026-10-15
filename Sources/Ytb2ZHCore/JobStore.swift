@@ -49,7 +49,13 @@ public struct JobStore: Sendable {
     public func unitsJSON(_ id: String) -> URL { jobDir(id: id).appendingPathComponent("units.json") }
     public func terminologyJSON(_ id: String) -> URL { jobDir(id: id).appendingPathComponent("terminology.json") }
     public func translatedJSON(_ id: String) -> URL { jobDir(id: id).appendingPathComponent("translated.json") }
-    public func clauseCache(_ id: String) -> URL { jobDir(id: id).appendingPathComponent("clauses", isDirectory: true) }
+    /// 子句缓存目录；rate≠1.0 时用独立子目录（不同语速的合成产物互不污染，
+    /// 1.0 保持原路径以兼容旧缓存）。.duration 伴生文件与 mp3 同目录。
+    public func clauseCache(_ id: String, rate: Double = 1.0) -> URL {
+        let base = jobDir(id: id).appendingPathComponent("clauses", isDirectory: true)
+        guard abs(rate - 1.0) >= 0.001 else { return base }
+        return base.appendingPathComponent("rate@\(String(format: "%g", rate))", isDirectory: true)
+    }
     public func planJSON(_ id: String) -> URL { jobDir(id: id).appendingPathComponent("plan.json") }
     public func dubWav(_ id: String) -> URL { jobDir(id: id).appendingPathComponent("dub.wav") }
     public func subtitles(_ id: String) -> URL { jobDir(id: id).appendingPathComponent("zh.srt") }

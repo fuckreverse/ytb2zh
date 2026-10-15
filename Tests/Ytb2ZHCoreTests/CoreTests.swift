@@ -99,6 +99,42 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(p.synth.edgeVoice, "zh-CN-YunxiNeural")
         XCTAssertNil(p.translate.terminology)
         XCTAssertEqual(p.blurb, "", "旧模板无 blurb 字段应默认为空串")
+        XCTAssertEqual(p.synth.rate, 1.0, "旧模板 synth 无 rate 键应默认 1.0")
+        XCTAssertEqual(p.schedule.rate, 1.0, "旧模板 schedule 无 rate 键应默认 1.0")
+    }
+
+    // MARK: - 合成语速（synth.rate 用户设置 / schedule.rate 调度层兜底）
+
+    func testSynthOptionsRateDefaultsAndClamp() {
+        XCTAssertEqual(SynthOptions().rate, 1.0)
+        XCTAssertEqual(SynthOptions(rate: 1.35).effectiveRate, 1.35)
+        XCTAssertEqual(SynthOptions(rate: 5).effectiveRate, SynthOptions.rateMax)
+        XCTAssertEqual(SynthOptions(rate: 0.1).effectiveRate, SynthOptions.rateMin)
+    }
+
+    func testSynthOptionsRateRoundTrip() throws {
+        var o = SynthOptions()
+        o.rate = 1.4
+        let back = try JSONDecoder().decode(SynthOptions.self, from: try JSONEncoder().encode(o))
+        XCTAssertEqual(back.rate, 1.4)
+    }
+
+    func testSynthOptionsLegacyJSONWithoutRate() throws {
+        // 旧模板 synth 对象无 rate 键 → 默认 1.0（向后兼容）
+        let json = #"{"apiKey":"k","wsURL":"wss://x","model":"m","voice":"v","rps":3}"#
+        let o = try JSONDecoder().decode(SynthOptions.self, from: Data(json.utf8))
+        XCTAssertEqual(o.rate, 1.0)
+        XCTAssertEqual(o.voice, "v")
+    }
+
+    func testScheduleOptionsLegacyJSONWithoutRate() throws {
+        // 旧模板 schedule 对象无 rate 键 → 默认 1.0（ synthesized decode 会因缺键抛错，故有自定义解码器）
+        let json = """
+        {"driftCap":1.0,"lagCap":0.5,"unitGap":0.2,"pauseMin":0.2,"pauseMax":1.0,"slowMax":1.1,"fastMax":1.2,"slidePreviewRange":0}
+        """
+        let o = try JSONDecoder().decode(ScheduleOptions.self, from: Data(json.utf8))
+        XCTAssertEqual(o.rate, 1.0)
+        XCTAssertEqual(o.driftCap, 1.0)
     }
 
     func testBlurbRoundTrip() throws {

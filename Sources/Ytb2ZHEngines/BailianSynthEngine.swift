@@ -8,7 +8,7 @@ import Ytb2ZHCore
 public final class BailianSynthEngine: SpeechSynthesisEngine, @unchecked Sendable {
     public let descriptor = EngineDescriptor(
         "bailian", "百炼 qwen-audio TTS", "qwen-audio-3.1-tts-flash，WebSocket 流式，RPS=3")
-    public var supportsRateControl: Bool { false }
+    public var supportsRateControl: Bool { true }
 
     public init() {}
 
@@ -63,7 +63,7 @@ public final class BailianSynthEngine: SpeechSynthesisEngine, @unchecked Sendabl
                 let voice: String
                 let format: String
                 let sample_rate: Int
-                let rate: Int
+                let rate: Double
                 let word_timestamp_enabled: Bool
             }
             struct Input: Encodable { var text: String? }
@@ -92,7 +92,7 @@ public final class BailianSynthEngine: SpeechSynthesisEngine, @unchecked Sendabl
             task_group: "audio", task: "tts", function: "SpeechSynthesizer",
             model: options.model,
             parameters: .init(voice: options.voice, format: "mp3", sample_rate: 24000,
-                              rate: 1, word_timestamp_enabled: false),
+                              rate: options.effectiveRate, word_timestamp_enabled: false),
             input: .init(text: text)))
 
         func receiveLoop() async throws {
@@ -164,6 +164,18 @@ public func runFFmpeg(_ args: [String]) throws -> (code: Int32, stdout: String, 
         throw EngineError.engineFailure("ffmpeg 失败：\(String(err.suffix(400)))")
     }
     return (p.terminationStatus, "", err)
+}
+
+/// ffmpeg atempo 单实例有效范围 [0.5, 2.0]；超出（如语速 2.0 × 调度加速 1.3 = 2.6）需链式拆分，
+/// 各段乘积为目标倍率。atempo 保持音高，链式段数越多代价略增，正常范围内仍是单段。
+public func atempoChain(_ rate: Double) -> String {
+    guard rate.isFinite, rate > 0.05 else { return "atempo=1.0000" }
+    var r = rate
+    var parts: [String] = []
+    while r > 2.0 { parts.append("atempo=2.0000"); r /= 2.0 }
+    while r < 0.5 { parts.append("atempo=0.5000"); r /= 0.5 }
+    parts.append(String(format: "atempo=%.4f", r))
+    return parts.joined(separator: ",")
 }
 
 func readDuration(_ mp3: URL, durPath: URL) -> Double? {

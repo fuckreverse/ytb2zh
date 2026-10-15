@@ -6,7 +6,7 @@ import Ytb2ZHCore
 public struct OpenAITTSEngine: SpeechSynthesisEngine {
     public let descriptor = EngineDescriptor(
         "openai-tts", "OpenAI 兼容 TTS", "/v1/audio/speech 接口，配合 synth.compat* 参数")
-    public var supportsRateControl: Bool { false }
+    public var supportsRateControl: Bool { true }
 
     public init() {}
 
@@ -41,7 +41,7 @@ public struct OpenAITTSEngine: SpeechSynthesisEngine {
         req.timeoutInterval = 120
         req.httpBody = try JSONEncoder().encode(Body(
             model: options.compatTTSModel, voice: options.voice,
-            input: text, response_format: "mp3", speed: 1.0))
+            input: text, response_format: "mp3", speed: options.effectiveRate))
 
         var lastError = "unknown"
         for attempt in 0..<3 {
@@ -76,7 +76,7 @@ public struct OpenAITTSEngine: SpeechSynthesisEngine {
 public struct EdgeTTSEngine: SpeechSynthesisEngine {
     public let descriptor = EngineDescriptor(
         "edge-tts", "Edge TTS（免费·内置）", "纯 Swift 直连微软端点，无需安装任何依赖")
-    public var supportsRateControl: Bool { false }
+    public var supportsRateControl: Bool { true }
 
     public init() {}
 
@@ -97,7 +97,7 @@ public struct EdgeTTSEngine: SpeechSynthesisEngine {
         for attempt in 0..<5 {
             do {
                 let data = try await EdgeTTSClient(proxy: options.edgeProxy)
-                    .synthesize(text: text, voice: options.edgeVoice)
+                    .synthesize(text: text, voice: options.edgeVoice, rate: options.effectiveRate)
                 try data.write(to: mp3)
                 let dur = probeDuration(mp3) ?? 0
                 try? String(format: "%.3f", dur).write(to: durPath, atomically: true, encoding: .utf8)

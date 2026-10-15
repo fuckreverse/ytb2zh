@@ -53,7 +53,9 @@ public protocol SpeechSynthesisEngine: Sendable {
     /// 合成一条子句到 cacheDir，返回 (文件URL, 实际时长)
     func synthesize(text: String, cacheKey: String, cacheDir: URL,
                     options: SynthOptions) async throws -> (url: URL, duration: Double)
-    /// 可选：语速调节能力；不支持者返回 nil，由调度器决定是否变速
+    /// 可选：能否按 options.rate 原生变速合成。
+    /// true = 合成产物已含目标语速（调度层不再叠加变速；原生语速音质优于 atempo 后处理）；
+    /// false = 忽略 rate，由调度层把语速折算进 atempo 兜底。
     var supportsRateControl: Bool { get }
 }
 
