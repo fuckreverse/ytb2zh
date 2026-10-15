@@ -773,7 +773,7 @@ struct ProviderPreset: Identifiable, Equatable {
         ProviderPreset(
             id: "ollama",
             name: "Ollama (本地大模型)",
-            subtitle: "本机离线推理（http://127.0.0.1:11434/v1，免填 API Key）",
+            subtitle: "本机离线推理（http://127.0.0.1:11434/v1，支持 Qwen3 与 Index-Homura 音节受控配音翻译）",
             badgeText: "OL",
             badgeColor: Color(red: 0.28, green: 0.32, blue: 0.38),
             category: .protocolAndLocal,
@@ -781,14 +781,17 @@ struct ProviderPreset: Identifiable, Equatable {
             defaultBaseURL: "http://127.0.0.1:11434/v1",
             apiKeyURL: "https://ollama.com",
             recommendedModels: [
+                ProviderModel(name: "IndexTeam/Index-Homura-9B", capabilities: [.translate]),
+                ProviderModel(name: "IndexTeam/Index-Homura-2B", capabilities: [.translate]),
+                ProviderModel(name: "qwen3:8b", capabilities: [.translate, .segment, .terminology]),
                 ProviderModel(name: "qwen3:14b", capabilities: [.translate, .segment, .terminology]),
                 ProviderModel(name: "qwen2.5:14b", capabilities: [.translate, .segment, .terminology]),
             ]
         ),
         ProviderPreset(
             id: "lmstudio",
-            name: "LM Studio (本地大模型)",
-            subtitle: "LM Studio 本地 Local Server（http://127.0.0.1:1234/v1，免填 API Key）",
+            name: "LM Studio / llama.cpp (本地大模型)",
+            subtitle: "LM Studio 或 llama-server 本地服务（http://127.0.0.1:1234/v1，支持 GGUF 模型免 Key 调用）",
             badgeText: "LMS",
             badgeColor: Color(red: 0.42, green: 0.26, blue: 0.78),
             category: .protocolAndLocal,
@@ -796,6 +799,8 @@ struct ProviderPreset: Identifiable, Equatable {
             defaultBaseURL: "http://127.0.0.1:1234/v1",
             apiKeyURL: "https://lmstudio.ai",
             recommendedModels: [
+                ProviderModel(name: "Index-Homura-9B-Q4_K_M", capabilities: [.translate]),
+                ProviderModel(name: "Index-Homura-2B-Q8_0", capabilities: [.translate]),
                 ProviderModel(name: "local-model", capabilities: [.translate, .segment, .terminology]),
             ]
         ),
@@ -818,8 +823,8 @@ struct ProviderPreset: Identifiable, Equatable {
         ),
         ProviderPreset(
             id: "whisper-local",
-            name: "本地 whisper.cpp (离线语音识别)",
-            subtitle: "内嵌 whisper.cpp Metal 硬件加速，支持自动下载 ggml 模型",
+            name: "本地语音识别 (Whisper DTW / Parakeet / Qwen3-ASR)",
+            subtitle: "Apple Silicon 本地离线识别：支持 Whisper Turbo (DTW)、Sherpa Parakeet TDT 0.6B 与 MLX Qwen3-ASR",
             badgeText: "ASR",
             badgeColor: Color(red: 0.20, green: 0.64, blue: 0.38),
             category: .protocolAndLocal,
@@ -827,14 +832,19 @@ struct ProviderPreset: Identifiable, Equatable {
             defaultBaseURL: "",
             apiKeyURL: "",
             recommendedModels: [
+                ProviderModel(name: "ggml-large-v3-turbo-q5_0.bin", capabilities: [.transcribe]),
+                ProviderModel(name: "ggml-large-v3-turbo.bin", capabilities: [.transcribe]),
                 ProviderModel(name: "ggml-base.en", capabilities: [.transcribe]),
                 ProviderModel(name: "ggml-medium.en-q5_0.bin", capabilities: [.transcribe]),
+                ProviderModel(name: "sherpa-asr:parakeet", capabilities: [.transcribe]),
+                ProviderModel(name: "sherpa-asr:sensevoice", capabilities: [.transcribe]),
+                ProviderModel(name: "mlx-asr:mlx-community/Qwen3-ASR-1.7B-4bit", capabilities: [.transcribe]),
             ]
         ),
         ProviderPreset(
             id: "local-tts",
-            name: "本地 TTS (macOS say / Sherpa-Onnx)",
-            subtitle: "离线语音合成：支持系统自带 say 语音或 Sherpa-Onnx 本地模型",
+            name: "本地播客 TTS (Kokoro / ZipVoice / Qwen3-TTS / say)",
+            subtitle: "Apple Silicon 离线语音合成：支持 Kokoro 中英混读播客、ZipVoice/Qwen3-TTS 零样本音色克隆及系统 say",
             badgeText: "TTS",
             badgeColor: Color(red: 0.52, green: 0.44, blue: 0.34),
             category: .protocolAndLocal,
@@ -842,6 +852,11 @@ struct ProviderPreset: Identifiable, Equatable {
             defaultBaseURL: "",
             apiKeyURL: "",
             recommendedModels: [
+                ProviderModel(name: "sherpa-onnx:kokoro-multi-lang-v1_1", capabilities: [.tts]),
+                ProviderModel(name: "sherpa-onnx:zipvoice", capabilities: [.tts]),
+                ProviderModel(name: "mlx-tts:mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit", capabilities: [.tts]),
+                ProviderModel(name: "mlx-tts:mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16", capabilities: [.tts]),
+                ProviderModel(name: "mlx-tts:OpenMOSS-Team/MOSS-TTSD-v1.0", capabilities: [.tts]),
                 ProviderModel(name: "say:Tingting", capabilities: [.tts]),
             ]
         ),

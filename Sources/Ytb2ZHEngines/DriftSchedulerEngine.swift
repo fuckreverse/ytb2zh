@@ -70,7 +70,7 @@ public struct DriftSchedulerEngine: SchedulerEngine {
 
             // 逐子句落位
             var t = ns
-            let clauseTexts = splitClauses(unit.zh)
+            let clauseTexts = splitClauses(unit.zh, podcastMode: options.podcastMode)
             for k in 0..<n {
                 let dur = effDurs[k] * stretch
                 let atempo = r / stretch
@@ -100,7 +100,7 @@ public struct DriftSchedulerEngine: SchedulerEngine {
             totalDuration: unitSchedules.last?.newEnd ?? 0)
     }
 
-    private func splitClauses(_ text: String) -> [String] {
-        ClauseTextSplitter().split(text)
+    private func splitClauses(_ text: String, podcastMode: Bool = false) -> [String] {
+        ClauseTextSplitter(podcastMode: podcastMode).split(text)
     }
 }

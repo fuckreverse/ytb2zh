@@ -227,11 +227,22 @@ public final class Pipeline: Sendable {
             units = cached
         }
 
-        // 6. 语音合成（子句级，带缓存；支持单元级音色覆盖）
-        let clauseTexts = units.map { splitClauses($0.zh) }
+        // 6. 语音合成（子句级，带缓存；支持单元级音色覆盖与零样本原声复刻）
+        let splitter = ClauseTextSplitter(podcastMode: profile.synth.podcastMode)
+        let clauseTexts = units.map { splitter.split($0.zh) }
+        // 若开启原声复刻且未显式提供参考音频，自动从分离后的人声轨/源音频中截取最佳 5~8s 片段
+        var baseSynthOpts = profile.synth
+        if baseSynthOpts.cloneSourceVoice && baseSynthOpts.referenceAudioPath.trimmingCharacters(in: .whitespaces).isEmpty {
+            if let extracted = ReferenceVoiceExtractor.extractIfNeeded(
+                audioSource: audioForTranscribe, units: units, workDir: ctx.jobDir) {
+                baseSynthOpts.referenceAudioPath = extracted.audioURL.path
+                baseSynthOpts.referenceText = extracted.transcript
+                emit(.log("已自动提取原声参考片段（\(String(format: "%.1f", extracted.duration))s）：\(extracted.transcript)"))
+            }
+        }
         // 语速：原生支持的引擎直接以目标语速合成（缓存按语速分目录，改语速不污染旧产物）；
         // 不支持的引擎忽略它，由调度层把语速折算进 atempo（schedule.rate，见下）
-        let synthRate = profile.synth.effectiveRate
+        let synthRate = baseSynthOpts.effectiveRate
         let nativeRate = engines.synthesizer.supportsRateControl
         let cacheDir = store.clauseCache(jobID, rate: synthRate)
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
@@ -245,7 +256,7 @@ public final class Pipeline: Sendable {
                 for (ui, unit) in units.enumerated() where !clauseTexts[ui].isEmpty {
                     let group = clauseTexts[ui]
                     let unitSynthOpts: SynthOptions = {
-                        var o = profile.synth
+                        var o = baseSynthOpts
                         if let v = unit.voice, !v.isEmpty { o.voice = v }
                         return o
                     }()
@@ -254,7 +265,7 @@ public final class Pipeline: Sendable {
                         for (ci, clause) in group.enumerated() {
                             let key = "u\(ui)_c\(ci)"
                             if synthCacheHit(cacheDir, key) { continue }
-                            if active >= max(1, profile.synth.rps) {
+                            if active >= max(1, baseSynthOpts.rps) {
                                 _ = try await group2.next(); active -= 1
                             }
                             active += 1
@@ -294,6 +305,7 @@ public final class Pipeline: Sendable {
             var schedOpts = profile.schedule
             // 原生语速引擎：合成产物已含目标语速 → 不叠加；否则 atempo 兜底兑现 synth.rate
             schedOpts.rate = nativeRate ? 1.0 : synthRate
+            schedOpts.podcastMode = profile.synth.podcastMode
             plan = engines.scheduler.schedule(units: units, clauseDurations: clauseDurations,
                                               options: schedOpts)
             try store.writeJSON(plan, to: store.planJSON(jobID))
@@ -357,14 +369,37 @@ public final class ClauseTextSplitter: @unchecked Sendable {
     private let separators = CharacterSet(charactersIn: "，；、")
     private let punct = CharacterSet(charactersIn: "，；、。！？…")
 
-    /// 整条译文去标点不超过此字数 → 不拆（约 4 字/秒 ≈ 4 秒语音之内）
-    static let wholeSentenceMaxChars = 16
-    /// 子句合并目标长度（相邻子句累计不足此字数即并入）
-    static let minClauseChars = 8
-    /// 孤儿尾句判定阈值
-    static let orphanTailChars = 5
+    /// 默认阈值（短句不拆 ≤ 16 字，约 4 秒语音之内）
+    public static let wholeSentenceMaxChars = 16
+    /// 默认子句合并目标长度（相邻子句累计不足此字数即并入）
+    public static let minClauseChars = 8
+    /// 默认孤儿尾句判定阈值
+    public static let orphanTailChars = 5
 
-    public init() {}
+    /// 播客长句模式预设：专为 Qwen3-TTS / Kokoro / ZipVoice 等强韵律 TTS 优化，
+    /// 整句不拆阈值提升至 38 字（约 8~9 秒语音），保留整句话的呼吸感与语调起伏（Intonation Contour）。
+    public static let podcast = ClauseTextSplitter(
+        wholeSentenceMaxChars: 38, minClauseChars: 16, orphanTailChars: 8)
+
+    public let maxWholeChars: Int
+    public let minChars: Int
+    public let tailChars: Int
+
+    public init(wholeSentenceMaxChars: Int = ClauseTextSplitter.wholeSentenceMaxChars,
+                minClauseChars: Int = ClauseTextSplitter.minClauseChars,
+                orphanTailChars: Int = ClauseTextSplitter.orphanTailChars) {
+        self.maxWholeChars = wholeSentenceMaxChars
+        self.minChars = minClauseChars
+        self.tailChars = orphanTailChars
+    }
+
+    public convenience init(podcastMode: Bool) {
+        if podcastMode {
+            self.init(wholeSentenceMaxChars: 38, minClauseChars: 16, orphanTailChars: 8)
+        } else {
+            self.init()
+        }
+    }
 
     public func split(_ text: String) -> [String] {
         var parts: [String] = []
@@ -385,16 +420,16 @@ public final class ClauseTextSplitter: @unchecked Sendable {
         let bare = { (s: String) -> Int in s.trimmingCharacters(in: punctSet).count }
 
         // 规则①：短句不拆
-        if parts.reduce(0, { $0 + bare($1) }) <= Self.wholeSentenceMaxChars {
+        if parts.reduce(0, { $0 + bare($1) }) <= maxWholeChars {
             return [text]
         }
 
-        // 规则②：贪心合并，目标每条 ≥ minClauseChars（尾条例外，交给规则③）
+        // 规则②：贪心合并，目标每条 ≥ minChars（尾条例外，交给规则③）
         var merged: [String] = []
         var acc = ""
         for p in parts {
             if acc.isEmpty { acc = p; continue }
-            if bare(acc) < Self.minClauseChars {
+            if bare(acc) < minChars {
                 acc += p
             } else {
                 merged.append(acc); acc = p
@@ -403,11 +438,73 @@ public final class ClauseTextSplitter: @unchecked Sendable {
         if !acc.isEmpty { merged.append(acc) }
 
         // 规则③：孤儿尾句并入前句（连读更自然）
-        if merged.count > 1, let tail = merged.last, bare(tail) < Self.orphanTailChars {
+        if merged.count > 1, let tail = merged.last, bare(tail) < tailChars {
             merged[merged.count - 2] += tail
             merged.removeLast()
         }
         return merged.isEmpty && !text.isEmpty ? [text] : merged
+    }
+}
+
+/// 零样本原声复刻参考片段自动提取器：
+/// 从语音单元列表 `[SpeechUnit]` 中挑选一条时长在 [4.0s, 8.5s]、词密度适中、无特殊噪声标记的清晰片段，
+/// 并调用 ffmpeg 从 `vocals.wav`（优先）或源媒体切出 24kHz 单声道 `ref_voice.wav` 供 Qwen3-TTS / ZipVoice 克隆音色。
+public enum ReferenceVoiceExtractor {
+    public struct ExtractedReference: Sendable, Equatable {
+        public let audioURL: URL
+        public let transcript: String
+        public let start: Double
+        public let duration: Double
+    }
+
+    /// 纯算法挑选最佳参考语音单元（优先 4.5s~7.5s 且英文字符数适中的完整句）
+    public static func selectBestUnit(from units: [SpeechUnit]) -> SpeechUnit? {
+        let candidates = units.filter { u in
+            let dur = u.end - u.start
+            let trimmed = u.en.trimmingCharacters(in: .whitespacesAndNewlines)
+            return dur >= 3.5 && dur <= 9.0 && trimmed.count >= 20 && !trimmed.contains("[")
+        }
+        if let ideal = candidates.min(by: { a, b in
+            let da = abs((a.end - a.start) - 5.8)
+            let db = abs((b.end - b.start) - 5.8)
+            return da < db
+        }) {
+            return ideal
+        }
+        return units.first { ($0.end - $0.start) >= 2.5 && !$0.en.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
+    public static func extractIfNeeded(audioSource: URL, units: [SpeechUnit], workDir: URL) -> ExtractedReference? {
+        guard let best = selectBestUnit(from: units) else { return nil }
+        let fm = FileManager.default
+        try? fm.createDirectory(at: workDir, withIntermediateDirectories: true)
+        let refWav = workDir.appendingPathComponent("ref_voice_24k.wav")
+        let refTxt = workDir.appendingPathComponent("ref_voice_24k.txt")
+        let dur = max(2.0, min(8.5, best.end - best.start))
+
+        if fm.fileExists(atPath: refWav.path),
+           let savedTxt = try? String(contentsOf: refTxt, encoding: .utf8),
+           !savedTxt.isEmpty {
+            return ExtractedReference(audioURL: refWav, transcript: savedTxt, start: best.start, duration: dur)
+        }
+
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        p.arguments = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-ss", String(format: "%.3f", best.start),
+            "-t", String(format: "%.3f", dur),
+            "-i", audioSource.path,
+            "-vn", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le",
+            refWav.path,
+        ]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        do { try p.run(); p.waitUntilExit() } catch { return nil }
+        guard p.terminationStatus == 0, fm.fileExists(atPath: refWav.path) else { return nil }
+        let transcript = best.en.trimmingCharacters(in: .whitespacesAndNewlines)
+        try? transcript.write(to: refTxt, atomically: true, encoding: .utf8)
+        return ExtractedReference(audioURL: refWav, transcript: transcript, start: best.start, duration: dur)
     }
 }
 

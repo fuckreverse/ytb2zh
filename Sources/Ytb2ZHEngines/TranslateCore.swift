@@ -90,6 +90,10 @@ public enum TranslateCore {
                     if pacing {
                         by = await Self.expandTooShort(in: by, range: range, units: units,
                                                        promptExtra: contextualBlock, complete: complete)
+                        if options.autoCompress {
+                            by = await Self.compressTooLong(in: by, range: range, units: units,
+                                                            promptExtra: contextualBlock, complete: complete)
+                        }
                     }
                     resultBox.with { r in
                         for (k, idx) in range.enumerated() where by[k] != nil && !by[k]!.isEmpty {
@@ -105,14 +109,18 @@ public enum TranslateCore {
         return resultBox.wrapped
     }
 
-    // MARK: 时长节奏（双向字数预算 + 超短句定向扩写）
+    // MARK: 时长节奏（双向字数预算 + 超短句定向扩写 + 超长句定向精简）
 
     /// 建议字数速率：中文 TTS 约 4～5 字/秒，取 4 留余量
     static let targetCharsPerSec = 4.0
     /// 超短句判定阈值：低于 时长×3 字视为填不满时间窗
     static let minCharsPerSec = 3.0
-    /// 过短时长不作判定（单元太短噪声大）
+    /// 超长句判定阈值：高于 时长×5.5 字视为超出 1.3x 加速预算，需精简防机关枪语速
+    static let maxCharsPerSec = 5.5
+    /// 过短时长不作扩写判定（单元太短噪声大）
     static let minTooShortDuration = 2.0
+    /// 过短时长不作缩写判定
+    static let minTooLongDuration = 2.5
 
     static func charCount(_ s: String) -> Int {
         s.filter { !$0.isWhitespace }.count
@@ -120,6 +128,10 @@ public enum TranslateCore {
 
     static func isTooShort(zh: String, duration: Double) -> Bool {
         duration >= minTooShortDuration && Double(charCount(zh)) < duration * minCharsPerSec
+    }
+
+    static func isTooLong(zh: String, duration: Double) -> Bool {
+        duration >= minTooLongDuration && Double(charCount(zh)) > duration * maxCharsPerSec
     }
 
     static func pacingRuleBlock(enabled: Bool) -> String {
@@ -158,6 +170,42 @@ public enum TranslateCore {
                let zh = d["zh"] as? String,
                charCount(zh) > charCount(f.zh) {
                 out[f.k] = zh.trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return out
+    }
+
+    /// 定向精简：检测本批超长句（> 时长×5.5 字），发一次精简请求；结果只在更短且非空时采纳
+    static func compressTooLong(in by: [Int: String], range: Range<Int>, units: [SpeechUnit],
+                                promptExtra: String, complete: Complete) async -> [Int: String] {
+        let flagged: [(k: Int, zh: String, dur: Double)] = range.enumerated().compactMap { k, idx in
+            guard let zh = by[k], !zh.isEmpty else { return nil }
+            let u = units[idx]
+            let dur = u.end - u.start
+            return isTooLong(zh: zh, duration: dur) ? (k, zh, dur) : nil
+        }
+        guard !flagged.isEmpty else { return by }
+
+        let lines = flagged.enumerated().map { j, f -> String in
+            let target = Int((f.dur * targetCharsPerSec).rounded())
+            return String(format: "%d: (%.1fs，目标约%d字) %@", j, f.dur, target, f.zh)
+        }.joined(separator: "\n")
+        let user = "以下中文配音译文相对可用时长过长（合成后会严重赶拍），请在不丢失核心信息的前提下精简到目标字数附近：\n\(lines)"
+        let system = """
+        你是配音台词精简师。把偏长的中文配音译文用利落自然的播客口语压缩到目标字数附近：删掉冗余修饰与书面套话，保留核心信息与英文专有名词。
+        返回 JSON 数组 [{"i":0,"zh":"..."}]，条数与输入一致，不要其他内容。
+        """
+        guard let raw = try? await complete(system + promptExtra, user),
+              let arr = try? extractJSONArray(raw) else { return by }
+
+        var out = by
+        for (j, f) in flagged.enumerated() {
+            if let d = arr.first(where: { ($0["i"] as? Int) == j }),
+               let zh = d["zh"] as? String {
+                let trimmed = zh.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty && charCount(trimmed) < charCount(f.zh) {
+                    out[f.k] = trimmed
+                }
             }
         }
         return out
@@ -236,5 +284,393 @@ public enum TranslateCore {
             throw EngineError.engineFailure("LLM 回复中无 JSON 数组：\(text.prefix(200))")
         }
         return arr
+    }
+}
+
+// MARK: - Index-Homura 音节可控配音翻译引擎（Bilibili IndexTeam/Index-Homura-2B/9B GGUF 本地推理）
+// 遵循官方 instTrans 受控翻译模板：逐句精确指定目标音节数 + 术语强约束（--glossary），
+// 并在 chat_template_kwargs 中显式关闭思考块（enable_thinking: false）及使用推荐温度 0.3。
+
+public struct IndexHomuraTranslateEngine: TranslateEngine {
+    public let descriptor = EngineDescriptor(
+        "homura", "Index-Homura 音节可控翻译（本地 GGUF）",
+        "B站配音专用受控翻译模型（2B/9B），显式控制目标音节数与术语表，从源头消除配音时长漂移")
+
+    public init() {}
+
+    /// 计算给定时间窗的目标音节预算（中文 1 汉字 = 1 音节，默认 4.2 音节/秒）
+    public static func targetSyllableCount(duration: Double, syllablesPerSec: Double = 4.2) -> Int {
+        let rate = syllablesPerSec > 0.5 ? syllablesPerSec : 4.2
+        return max(2, Int((max(0.5, duration) * rate).rounded()))
+    }
+
+    /// 估算中英混合播客译文的实际音节数（CJK 字符每字 1 音节；英文单词按元音群估算音节；数字按位估算）
+    public static func countSyllables(_ text: String) -> Int {
+        var count = 0
+        var asciiWord = ""
+        func flushAsciiWord() {
+            guard !asciiWord.isEmpty else { return }
+            let w = asciiWord.lowercased()
+            asciiWord = ""
+            // 全大写缩写（如 LLM / API / GPU）按字母逐个念出
+            if w.count <= 4 && w.allSatisfy({ $0.isLetter }) {
+                count += w.count
+                return
+            }
+            let vowels = Set("aeiouy")
+            var groups = 0
+            var prevVowel = false
+            for ch in w {
+                if ch.isNumber {
+                    groups += 1
+                    prevVowel = false
+                } else if vowels.contains(ch) {
+                    if !prevVowel { groups += 1 }
+                    prevVowel = true
+                } else {
+                    prevVowel = false
+                }
+            }
+            if w.hasSuffix("e") && groups > 1 { groups -= 1 }
+            count += max(1, groups)
+        }
+
+        for scalar in text.unicodeScalars {
+            if scalar.isASCII && (CharacterSet.alphanumerics.contains(scalar)) {
+                asciiWord.append(Character(scalar))
+            } else {
+                flushAsciiWord()
+                // CJK 统一表意文字
+                if (0x4E00...0x9FFF).contains(scalar.value) || (0x3400...0x4DBF).contains(scalar.value) {
+                    count += 1
+                }
+            }
+        }
+        flushAsciiWord()
+        return count
+    }
+
+    /// 组装 Index-Homura 官方受控配音翻译 Prompt（支持音节数 + 术语表同时生效）
+    public static func buildHomuraPrompt(
+        sourceText: String,
+        targetLanguage: String = "zh",
+        targetSyllables: Int,
+        terminology: [TerminologyTerm] = []
+    ) -> String {
+        let langName: String = {
+            switch targetLanguage.lowercased() {
+            case "zh", "zh-cn", "zh-hans": return "简体中文"
+            case "en": return "英语"
+            case "ja": return "日语"
+            case "ko": return "韩语"
+            case "es": return "西班牙语"
+            default: return targetLanguage
+            }
+        }()
+
+        let cleanSource = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 只挑当前源句中实际命中的术语（避免无关术语干扰 2B/9B 小模型注意力）
+        let lowerSource = cleanSource.lowercased()
+        let activeTerms = terminology.filter { t in
+            !t.en.isEmpty && !t.zh.isEmpty && lowerSource.contains(t.en.lowercased())
+        }
+
+        var lines: [String] = [
+            "请将以下文本翻译为\(langName)，译文严格控制在 \(max(1, targetSyllables)) 个音节。"
+        ]
+        if !activeTerms.isEmpty {
+            lines.append("请严格遵循以下术语对应关系进行翻译：")
+            for term in activeTerms {
+                lines.append("- \(term.en) -> \(term.zh)")
+            }
+        }
+        lines.append("直接输出翻译结果，不要进行任何解释。")
+        lines.append("")
+        lines.append(cleanSource)
+        return lines.joined(separator: "\n")
+    }
+
+    public func translate(units: [SpeechUnit], options: TranslateOptions,
+                          progress: @Sendable @escaping (Double, String?) -> Void) async throws -> [SpeechUnit] {
+        // 自动探测或拉起本地 LLM 推理服务（Ollama / LM Studio / llama-server + 自动下载 Index-Homura-2B GGUF）；
+        // 若本机未装任何本地 LLM 运行时但网关可用，自动无感降级到网关双向时长控制翻译，绝不让用户卡在报错页。
+        let resolved = try await LocalLLMManager.ensureReady(options: options, progress: progress)
+        if resolved.useGatewayFallback {
+            progress(0.05, "未检测到本地 Ollama/llama.cpp，自动切换网关双向时长受控翻译…")
+            return try await GatewayTranslateEngine().translate(units: units, options: options, progress: progress)
+        }
+
+        let baseURL = resolved.baseURL
+        let model = resolved.model
+        let apiKey = options.compatAPIKey
+        let terms = options.terminology ?? []
+        let syllablesPerSec = options.targetSyllablesPerSec > 0.5 ? options.targetSyllablesPerSec : 4.2
+
+        let resultBox = Mutex(units)
+        let sem = AsyncSemaphore(value: max(1, options.concurrency))
+        let done = Mutex(0)
+        let total = max(1, units.count)
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for (idx, unit) in units.enumerated() {
+                group.addTask {
+                    await sem.wait()
+                    defer { Task { await sem.signal() } }
+
+                    let dur = max(0.8, unit.end - unit.start)
+                    let targetSyl = Self.targetSyllableCount(duration: dur, syllablesPerSec: syllablesPerSec)
+                    let prompt = Self.buildHomuraPrompt(
+                        sourceText: unit.en,
+                        targetLanguage: options.targetLanguage,
+                        targetSyllables: targetSyl,
+                        terminology: terms)
+
+                    var zh = try await Self.callHomuraChat(
+                        baseURL: baseURL, apiKey: apiKey, model: model, userPrompt: prompt)
+
+                    // 若开启三步精修且音节偏差超过 25%，按偏差比例自适应修正目标音节重译一次
+                    if options.quality == .threePass && dur >= 2.0 {
+                        let actualSyl = Self.countSyllables(zh)
+                        let diffRatio = abs(Double(actualSyl - targetSyl)) / Double(max(1, targetSyl))
+                        if diffRatio > 0.25 && actualSyl > 0 {
+                            let adjustedTarget = max(2, Int((Double(targetSyl * targetSyl) / Double(actualSyl)).rounded()))
+                            let retryPrompt = Self.buildHomuraPrompt(
+                                sourceText: unit.en,
+                                targetLanguage: options.targetLanguage,
+                                targetSyllables: adjustedTarget,
+                                terminology: terms)
+                            if let retryZh = try? await Self.callHomuraChat(
+                                baseURL: baseURL, apiKey: apiKey, model: model, userPrompt: retryPrompt),
+                               !retryZh.isEmpty {
+                                let retrySyl = Self.countSyllables(retryZh)
+                                if abs(retrySyl - targetSyl) < abs(actualSyl - targetSyl) {
+                                    zh = retryZh
+                                }
+                            }
+                        }
+                    }
+
+                    resultBox.with { r in
+                        if !zh.isEmpty { r[idx].zh = zh }
+                    }
+                    let d = done.with { v -> Int in v += 1; return v }
+                    progress(Double(d) / Double(total), "音节受控翻译 \(d)/\(total)")
+                }
+            }
+            try await group.waitForAll()
+        }
+        return resultBox.wrapped
+    }
+
+    /// 调用本地 llama-server / Ollama / vLLM 的 /v1/chat/completions，注入 enable_thinking=false 与 temperature=0.3
+    public static func callHomuraChat(
+        baseURL: String, apiKey: String, model: String, userPrompt: String, retries: Int = 3
+    ) async throws -> String {
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if key.isEmpty && !OpenAICompatTranslateEngine.isLocalEndpoint(baseURL) {
+            throw EngineError.engineFailure("Index-Homura 远端端点需要配置 API Key")
+        }
+        let urlString = OpenAICompatTranslateEngine.resolveChatCompletionsURL(baseURL)
+        guard let url = URL(string: urlString) else {
+            throw EngineError.notConfigured("Index-Homura Base URL 无效：\(baseURL)")
+        }
+        let payload: [String: Any] = [
+            "model": model,
+            "messages": [["role": "user", "content": userPrompt]],
+            "temperature": 0.3,
+            "max_tokens": max(512, userPrompt.count * 3),
+            "chat_template_kwargs": ["enable_thinking": false],
+        ]
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        req.timeoutInterval = 180
+        req.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        var lastError = "unknown"
+        for attempt in 0..<retries {
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+                    let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
+                    lastError = "HTTP \(code): \(String(data: data.prefix(240), encoding: .utf8) ?? "")"
+                    throw URLError(.badServerResponse)
+                }
+                guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let choices = obj["choices"] as? [[String: Any]],
+                      let first = choices.first,
+                      let message = first["message"] as? [String: Any],
+                      let content = message["content"] as? String else {
+                    throw EngineError.engineFailure("Index-Homura 返回结构异常")
+                }
+                let cleaned = OpenAICompatTranslateEngine.stripThinkTags(content)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !cleaned.isEmpty { return cleaned }
+                lastError = "空回复"
+            } catch {
+                lastError = error.localizedDescription
+            }
+            if attempt + 1 < retries {
+                try await Task.sleep(for: .seconds(2 * (attempt + 1)))
+            }
+        }
+        throw EngineError.engineFailure("Index-Homura 调用失败：\(lastError)")
+    }
+}
+
+// MARK: - 本地大模型零门槛自启与智能降级管理器（Ollama / LM Studio / llama-server）
+
+public enum LocalLLMManager {
+    public struct ResolvedEndpoint: Sendable {
+        public let baseURL: String
+        public let model: String
+        public let useGatewayFallback: Bool
+    }
+
+    private static let managedLlamaPort = 18089
+    private static let managedProcess = Mutex<Process?>(nil)
+
+    /// 探测本机 LLM 运行时状态（供应用设置页展示）
+    public static func runtimeStatus() -> (llamaServerPath: String?, ollamaPath: String?) {
+        let llama = SidecarPaths.which("llama-server")
+            ?? (FileManager.default.isExecutableFile(atPath: NSHomeDirectory() + "/.ytb2zh/bin/llama-server")
+                ? NSHomeDirectory() + "/.ytb2zh/bin/llama-server" : nil)
+        let ollama = SidecarPaths.which("ollama")
+            ?? (FileManager.default.isExecutableFile(atPath: "/Applications/Ollama.app/Contents/Resources/ollama")
+                ? "/Applications/Ollama.app/Contents/Resources/ollama" : nil)
+        return (llama, ollama)
+    }
+
+    public static func ensureReady(
+        options: TranslateOptions,
+        progress: @Sendable (Double, String?) -> Void
+    ) async throws -> ResolvedEndpoint {
+        let configuredURL = options.compatBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "http://127.0.0.1:11434/v1" : options.compatBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let configuredModel = options.compatModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "IndexTeam/Index-Homura-2B" : options.compatModel.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 1) 若非本地地址（用户配了云端 OpenAI 兼容服务且填了 Key），直接走配置值
+        if !OpenAICompatTranslateEngine.isLocalEndpoint(configuredURL) && !options.compatAPIKey.isEmpty {
+            return ResolvedEndpoint(baseURL: configuredURL, model: configuredModel, useGatewayFallback: false)
+        }
+
+        // 2) 探测用户配置的本地端口（如 Ollama 11434 / LM Studio 1234）是否已有可用模型
+        if let models = try? await probeLocalModels(baseURL: configuredURL), !models.isEmpty {
+            if models.contains(configuredModel) {
+                return ResolvedEndpoint(baseURL: configuredURL, model: configuredModel, useGatewayFallback: false)
+            }
+            if let homura = models.first(where: { $0.lowercased().contains("homura") }) {
+                return ResolvedEndpoint(baseURL: configuredURL, model: homura, useGatewayFallback: false)
+            }
+        }
+
+        // 3) 探测内置托管的 llama-server 端口是否已在运行
+        let managedURL = "http://127.0.0.1:\(managedLlamaPort)/v1"
+        if let models = try? await probeLocalModels(baseURL: managedURL), let first = models.first {
+            return ResolvedEndpoint(baseURL: managedURL, model: first, useGatewayFallback: false)
+        }
+
+        let (llamaPath, ollamaPath) = runtimeStatus()
+
+        // 4) 若本机装有 llama-server：自动下载 Index-Homura-2B.Q4_K_M.gguf 并在后台拉起 llama-server
+        if let llamaPath {
+            let gguf = try await ModelStore.ensureHomuraGGUF(configured: configuredModel) { frac, msg in
+                progress(frac * 0.15, msg)
+            }
+            progress(0.16, "正在启动本地 llama-server（Metal GPU 加速）…")
+            if try await startManagedLlamaServer(executable: llamaPath, ggufPath: gguf) {
+                return ResolvedEndpoint(baseURL: managedURL, model: "Index-Homura-2B", useGatewayFallback: false)
+            }
+        }
+
+        // 5) 若本机装有 Ollama：自动下载 Index-Homura-2B.Q4_K_M.gguf 并自动导入到 Ollama
+        if let ollamaPath {
+            let gguf = try await ModelStore.ensureHomuraGGUF(configured: configuredModel) { frac, msg in
+                progress(frac * 0.15, msg)
+            }
+            progress(0.16, "正在将 Index-Homura-2B 导入本地 Ollama…")
+            if let importedModel = try? await importGGUFIntoOllama(ollamaPath: ollamaPath, ggufPath: gguf) {
+                return ResolvedEndpoint(
+                    baseURL: "http://127.0.0.1:11434/v1", model: importedModel, useGatewayFallback: false)
+            }
+        }
+
+        // 6) 若 Ollama / LM Studio 里已有任意本地模型（如 qwen3 / qwen2.5 / deepseek），直接复用它
+        for candidateURL in [configuredURL, "http://127.0.0.1:11434/v1", "http://127.0.0.1:1234/v1"] {
+            if let models = try? await probeLocalModels(baseURL: candidateURL), let first = models.first {
+                return ResolvedEndpoint(baseURL: candidateURL, model: first, useGatewayFallback: false)
+            }
+        }
+
+        // 7) 兜底：若本机未装 Ollama / llama.cpp，自动无感回退到网关翻译（自带双向时长控制），避免新用户报错
+        return ResolvedEndpoint(baseURL: configuredURL, model: configuredModel, useGatewayFallback: true)
+    }
+
+    private static func probeLocalModels(baseURL: String) async throws -> [String] {
+        var trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasSuffix("/") { trimmed.removeLast() }
+        let urlStr = trimmed.hasSuffix("/models") ? trimmed : "\(trimmed)/models"
+        guard let url = URL(string: urlStr) else { return [] }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 2.0
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = obj["data"] as? [[String: Any]] else { return [] }
+        return arr.compactMap { $0["id"] as? String }
+    }
+
+    private static func startManagedLlamaServer(executable: String, ggufPath: String) async throws -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: executable)
+        p.arguments = [
+            "-m", ggufPath,
+            "--host", "127.0.0.1",
+            "--port", String(managedLlamaPort),
+            "-ngl", "99",
+            "-c", "4096",
+            "--jinja",
+        ]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try p.run()
+        managedProcess.with { $0 = p }
+
+        let managedURL = "http://127.0.0.1:\(managedLlamaPort)/v1"
+        for _ in 0..<25 {
+            try await Task.sleep(for: .milliseconds(400))
+            if let models = try? await probeLocalModels(baseURL: managedURL), !models.isEmpty {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func importGGUFIntoOllama(ollamaPath: String, ggufPath: String) async throws -> String? {
+        let runner = ProcessRunner()
+        // 确保 ollama serve 已启动
+        if (try? await probeLocalModels(baseURL: "http://127.0.0.1:11434/v1")) == nil {
+            let serve = Process()
+            serve.executableURL = URL(fileURLWithPath: ollamaPath)
+            serve.arguments = ["serve"]
+            serve.standardOutput = FileHandle.nullDevice
+            serve.standardError = FileHandle.nullDevice
+            try? serve.run()
+            try? await Task.sleep(for: .seconds(2))
+        }
+        let modelName = "index-homura-2b"
+        let modelfile = URL(fileURLWithPath: ModelStore.root).appendingPathComponent("Modelfile.homura")
+        let content = """
+        FROM "\(ggufPath)"
+        PARAMETER temperature 0.3
+        """
+        try content.write(to: modelfile, atomically: true, encoding: .utf8)
+        let r = try runner.run(ollamaPath, ["create", modelName, "-f", modelfile.path])
+        guard r.code == 0 else { return nil }
+        return modelName
     }
 }

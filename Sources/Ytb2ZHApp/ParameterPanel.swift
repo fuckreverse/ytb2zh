@@ -38,6 +38,10 @@ struct ParameterPanel: View {
         profile.engines[StepID.synthesize.rawValue] ?? "bailian"
     }
 
+    private var transcribeEngineID: String {
+        profile.engines[StepID.transcribe.rawValue] ?? "whisper-native"
+    }
+
     private var composeEngineID: String {
         profile.engines[StepID.compose.rawValue] ?? "ffmpeg"
     }
@@ -83,8 +87,36 @@ struct ParameterPanel: View {
         CinemaSection {
             CinemaDisclosure(isExpanded: $advancedExpanded) {
                 EnginePickerRow(profile: $profile)
+                groupHeader("本地语音识别（ASR）调优")
+                if transcribeEngineID == "whisper-native" || transcribeEngineID == "whisper-cpp" {
+                    LabeledContent("Whisper 模型") {
+                        CinemaSelect("Whisper 模型", selection: whisperPresetBinding, options: [
+                            CinemaOption("ggml-large-v3-turbo-q5_0.bin", L10n.tr("Large-v3-Turbo Q5（推荐·547MB 高准度）")),
+                            CinemaOption("ggml-base.en", L10n.tr("Base.en（轻量·142MB 极速）")),
+                            CinemaOption("ggml-medium.en-q5_0.bin", L10n.tr("Medium.en Q5（均衡）")),
+                            CinemaOption("ggml-large-v3-turbo.bin", L10n.tr("Large-v3-Turbo FP16（完整精度·1.5GB）")),
+                        ])
+                        .labelsHidden()
+                        .frame(width: 280)
+                    }
+                    Toggle("DTW 毫秒级词时间戳精确对齐（消除长停顿漂移）", isOn: $profile.transcribe.enableDTW)
+                } else if transcribeEngineID == "sherpa-asr" {
+                    LabeledContent("离线识别模型") {
+                        CinemaSelect("离线识别模型", selection: sherpaASRPresetBinding, options: [
+                            CinemaOption("parakeet", L10n.tr("Parakeet TDT 0.6B v3（英文极速王·640MB）")),
+                            CinemaOption("sensevoice", L10n.tr("SenseVoice 多语种识别（中英日韩粤）")),
+                            CinemaOption("qwen3-asr", L10n.tr("Qwen3-ASR 0.6B（专有名词强）")),
+                        ])
+                        .labelsHidden()
+                        .frame(width: 280)
+                    }
+                }
                 groupHeader("处理速度与翻译细节")
                 Toggle("自动扩译（填不满时间窗时扩写）", isOn: $profile.translate.autoExpand)
+                Toggle("自动缩译（超出时间窗时精简防赶拍）", isOn: $profile.translate.autoCompress)
+                Toggle("中文播客长句连读模式（减少逗号碎切，保留整句呼吸与语调起伏）", isOn: $profile.synth.podcastMode)
+                sliderRow("目标音节速率", value: $profile.translate.targetSyllablesPerSec, in: 3.0...6.0, step: 0.1,
+                          hint: "每秒目标音节/汉字数（供 Index-Homura 音节受控翻译使用，默认 4.2）")
                 stepperRow("批次大小", value: $profile.translate.batchSize, in: 4...40, hint: "每批翻译条数")
                 stepperRow("并发批次", value: $profile.translate.concurrency, in: 1...8, hint: "")
                 stepperRow("配音并发", value: $profile.synth.rps, in: 1...5, hint: "根据服务限流调整")
@@ -157,12 +189,59 @@ struct ParameterPanel: View {
                 .help("macOS 系统语音，离线可用；更多音色在系统设置 → 辅助功能 → 朗读内容安装")
             }
         case "sherpa-onnx":
-            LabeledContent("Sherpa-Onnx 模型目录") {
-                TextField("如 ~/sherpa-onnx/vits-zh-hf-theresa", text: $profile.synth.sherpaOnnxModelDir)
-                    .textFieldStyle(CinemaTextFieldStyle())
-                    .frame(width: 340)
+            LabeledContent("离线语音方案") {
+                CinemaSelect("离线语音方案", selection: sherpaModelBinding, options: [
+                    CinemaOption("kokoro-multi-lang-v1_1", L10n.tr("Kokoro 中英混读播客（推荐·自动下载）")),
+                    CinemaOption("zipvoice", L10n.tr("ZipVoice 零样本原声复刻（自动克隆博主声音）")),
+                    CinemaOption("vits-zh-hf-theresa", L10n.tr("Theresa 经典中文女声（轻量·170MB）")),
+                ])
+                .labelsHidden()
+                .frame(width: 280)
             }
-            .help("目录需含 model.onnx、tokens.txt、dict/；二进制自动查找 ~/sherpa-onnx/bin/ 或 PATH。从 github.com/k2-fsa/sherpa-onnx/releases 下载")
+            if sherpaModelBinding.wrappedValue == "zipvoice" {
+                Text("已启用零样本原声复刻：将自动从视频中截取 5~8 秒最清晰的博主原声说中文，无需手动切片")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if sherpaModelBinding.wrappedValue == "kokoro-multi-lang-v1_1" {
+                LabeledContent("播客主播音色") {
+                    CinemaSelect("播客主播音色", selection: kokoroVoiceBinding, options: [
+                        CinemaOption("zm_010", L10n.tr("云希 · 沉稳科技男播客")),
+                        CinemaOption("zm_009", L10n.tr("云健 · 磁性深沉男声")),
+                        CinemaOption("zm_011", L10n.tr("云夏 · 活力少年男声")),
+                        CinemaOption("zm_012", L10n.tr("云扬 · 专业叙事男声")),
+                        CinemaOption("zf_001", L10n.tr("晓北 · 亲切自然女播客")),
+                        CinemaOption("zf_002", L10n.tr("晓妮 · 温柔知性女声")),
+                        CinemaOption("zf_003", L10n.tr("晓晓 · 清脆活力女声")),
+                        CinemaOption("zf_004", L10n.tr("晓伊 · 甜美讲述女声")),
+                        CinemaOption("af_heart", L10n.tr("Heart · 美式自然女声")),
+                        CinemaOption("am_adam", L10n.tr("Adam · 美式沉稳男声")),
+                    ])
+                    .labelsHidden()
+                    .frame(width: 240)
+                }
+            }
+        case "mlx-tts":
+            LabeledContent("MLX 播客模型") {
+                CinemaSelect("MLX 播客模型", selection: mlxModelBinding, options: [
+                    CinemaOption("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit", L10n.tr("Qwen3-TTS 0.6B 极速播客版（推荐）")),
+                    CinemaOption("mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16", L10n.tr("Qwen3-TTS 1.7B 情感精修版")),
+                    CinemaOption("mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16", L10n.tr("Qwen3-TTS 1.7B 自然语言捏音色")),
+                    CinemaOption("OpenMOSS-Team/MOSS-TTSD-v1.0", L10n.tr("MOSS-TTSD 1.0 双人播客对话版")),
+                ])
+                .labelsHidden()
+                .frame(width: 280)
+            }
+            LabeledContent("播客主播音色") {
+                CinemaSelect("播客主播音色", selection: mlxVoicePresetBinding, options: [
+                    CinemaOption("Dylan", L10n.tr("Dylan · 沉稳科技男主播")),
+                    CinemaOption("Vivian", L10n.tr("Vivian · 知性自然女主播")),
+                    CinemaOption("Uncle_Fu", L10n.tr("Uncle_Fu · 醇厚故事男声")),
+                    CinemaOption("Serena", L10n.tr("Serena · 温柔亲切女声")),
+                    CinemaOption("Eric", L10n.tr("Eric · 阳光活力男声")),
+                ])
+                .labelsHidden()
+                .frame(width: 240)
+            }
+            Toggle("零样本复刻原视频博主音色（自动截取 5~8s 清晰人声）", isOn: $profile.synth.cloneSourceVoice)
         case "openai-tts":
             Text("音色/模型在「应用设置 → 模型提供商」按能力配置")
                 .font(.callout).foregroundStyle(.secondary)
@@ -185,6 +264,93 @@ struct ParameterPanel: View {
             .font(.subheadline).fontWeight(.semibold)
             .foregroundStyle(.secondary)
             .padding(.top, 4)
+    }
+
+    // MARK: - 人性化预设绑定（将底层模型路径/代号归一化为下拉菜单友好项）
+
+    private var whisperPresetBinding: Binding<String> {
+        Binding(
+            get: {
+                let raw = profile.transcribe.modelPath.trimmingCharacters(in: .whitespaces)
+                if raw.contains("large-v3-turbo-q5_0") { return "ggml-large-v3-turbo-q5_0.bin" }
+                if raw.contains("large-v3-turbo") { return "ggml-large-v3-turbo.bin" }
+                if raw.contains("medium.en") && !raw.contains("/vid2zh/") { return "ggml-medium.en-q5_0.bin" }
+                return "ggml-base.en"
+            },
+            set: { profile.transcribe.modelPath = $0 }
+        )
+    }
+
+    private var sherpaASRPresetBinding: Binding<String> {
+        Binding(
+            get: {
+                let raw = profile.transcribe.sherpaModelDir.lowercased()
+                if raw.contains("sense") { return "sensevoice" }
+                if raw.contains("qwen") { return "qwen3-asr" }
+                return "parakeet"
+            },
+            set: { profile.transcribe.sherpaModelDir = $0 }
+        )
+    }
+
+    private var sherpaModelBinding: Binding<String> {
+        Binding(
+            get: {
+                let raw = profile.synth.sherpaOnnxModelDir.lowercased()
+                if raw.contains("zipvoice") { return "zipvoice" }
+                if raw.contains("kokoro") { return "kokoro-multi-lang-v1_1" }
+                if raw.isEmpty { return "kokoro-multi-lang-v1_1" }
+                return "vits-zh-hf-theresa"
+            },
+            set: { newVal in
+                profile.synth.sherpaOnnxModelDir = newVal
+                if newVal == "zipvoice" {
+                    profile.synth.cloneSourceVoice = true
+                    profile.synth.podcastMode = true
+                } else if newVal.contains("kokoro") {
+                    profile.synth.cloneSourceVoice = false
+                    profile.synth.podcastMode = true
+                    if profile.synth.localVoice.isEmpty || profile.synth.localVoice == "Tingting" {
+                        profile.synth.localVoice = "zm_010"
+                    }
+                } else {
+                    profile.synth.cloneSourceVoice = false
+                }
+            }
+        )
+    }
+
+    private var kokoroVoiceBinding: Binding<String> {
+        Binding(
+            get: {
+                let v = profile.synth.localVoice.trimmingCharacters(in: .whitespaces)
+                let known = ["zm_010", "zm_009", "zm_011", "zm_012", "zf_001", "zf_002", "zf_003", "zf_004", "af_heart", "am_adam"]
+                return known.contains(v) ? v : "zm_010"
+            },
+            set: { profile.synth.localVoice = $0 }
+        )
+    }
+
+    private var mlxModelBinding: Binding<String> {
+        Binding(
+            get: {
+                let m = profile.synth.mlxModel.trimmingCharacters(in: .whitespaces)
+                return m.isEmpty ? "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit" : m
+            },
+            set: { profile.synth.mlxModel = $0 }
+        )
+    }
+
+    private var mlxVoicePresetBinding: Binding<String> {
+        Binding(
+            get: {
+                let v = profile.synth.mlxVoice.trimmingCharacters(in: .whitespaces)
+                let known = ["Dylan", "Vivian", "Uncle_Fu", "Serena", "Eric"]
+                for k in known where v.hasPrefix(k) { return k }
+                return "Dylan"
+            },
+            set: { profile.synth.mlxVoice = $0 }
+        )
     }
 
     // MARK: 控件行

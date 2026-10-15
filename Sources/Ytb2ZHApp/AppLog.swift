@@ -99,74 +99,25 @@ final class AppLog: ObservableObject {
 
 struct AppLogSheet: View {
     @ObservedObject private var log = AppLog.shared
-    @State private var onlyWarn = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("应用日志（最近 \(AppLog.capacity) 行）").font(.headline)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("应用日志").font(.title2.bold())
+                    Text("保留最近 2000 条，关闭窗口后继续记录")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
-                Toggle("仅警告/错误", isOn: $onlyWarn)
-                    .toggleStyle(CinemaToggleStyle())
-                    .font(.caption)
-                Button("清空") { log.clear() }
-                Button("复制全部") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(log.exportText, forType: .string)
-                }
-                Button("导出…") { export() }
-                Divider().frame(height: 16)
-                Button {
-                    dismiss()
-                } label: {
-                    Label("关闭", systemImage: "xmark.circle.fill")
-                }
-                .keyboardShortcut(.cancelAction)
-            }
-            .padding(10)
-
+                Button("清空") { log.clear() }.disabled(log.entries.isEmpty)
+                Button("关闭") { dismiss() }.keyboardShortcut(.cancelAction)
+            }.padding(18)
             Divider()
-
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(filtered) { e in
-                            Text(e.line)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(color(for: e.level))
-                                .textSelection(.enabled)
-                                .id(e.id)
-                        }
-                    }
-                    .padding(8)
-                }
-                .onChange(of: filtered.count) { _ in
-                    if let last = filtered.last { proxy.scrollTo(last.id, anchor: .bottom) }
-                }
-            }
+            LogConsole(rows: log.entries.map {
+                ConsoleLogRow(id: $0.id.uuidString, text: $0.line, level: $0.level, category: $0.category)
+            }, filename: "ytb2zh-log.txt")
         }
-        .frame(minWidth: 720, minHeight: 420)
-    }
-
-    private var filtered: [AppLog.Entry] {
-        onlyWarn ? log.entries.filter { $0.level >= .warn } : log.entries
-    }
-
-    private func color(for level: AppLogLevel) -> Color {
-        switch level {
-        case .debug: .secondary
-        case .info: .primary
-        case .warn: .orange
-        case .error: .red
-        }
-    }
-
-    private func export() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.plainText]
-        panel.nameFieldStringValue = "ytb2zh-log.txt"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? log.exportText.write(to: url, atomically: true, encoding: .utf8)
+        .frame(minWidth: 820, idealWidth: 1020, minHeight: 480, idealHeight: 640)
     }
 }

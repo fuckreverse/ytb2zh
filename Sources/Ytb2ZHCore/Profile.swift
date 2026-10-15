@@ -42,17 +42,30 @@ public struct TranscribeOptions: Codable, Hashable, Sendable {
     public var compatBaseURL: String
     public var compatAPIKey: String
     public var compatModel: String
+    /// 启用 DTW 词级时间戳精确对齐（whisper-native 生效）
+    public var enableDTW: Bool
+    /// Sherpa-Onnx 离线 ASR 模型目录或预设名（engines.transcribe == "sherpa-asr" 时生效）
+    public var sherpaModelDir: String
+    /// Apple Silicon MLX ASR 模型名（engines.transcribe == "mlx-asr" 时生效）
+    public var mlxModel: String
 
     public init(modelPath: String = "\(NSHomeDirectory())/vid2zh/models/ggml-medium.en-q5_0.bin",
                 language: String = "en", srtPath: String = "",
                 compatBaseURL: String = "https://api.openai.com/v1",
-                compatAPIKey: String = "", compatModel: String = "whisper-1") {
+                compatAPIKey: String = "", compatModel: String = "whisper-1",
+                enableDTW: Bool = true,
+                sherpaModelDir: String = "",
+                mlxModel: String = "mlx-community/Qwen3-ASR-1.7B-4bit") {
         self.modelPath = modelPath; self.language = language; self.srtPath = srtPath
         self.compatBaseURL = compatBaseURL; self.compatAPIKey = compatAPIKey; self.compatModel = compatModel
+        self.enableDTW = enableDTW
+        self.sherpaModelDir = sherpaModelDir
+        self.mlxModel = mlxModel
     }
 
     private enum CodingKeys: String, CodingKey {
         case modelPath, language, srtPath, compatBaseURL, compatAPIKey, compatModel
+        case enableDTW, sherpaModelDir, mlxModel
     }
     public init(from decoder: Decoder) throws {
         let d = TranscribeOptions()
@@ -63,6 +76,9 @@ public struct TranscribeOptions: Codable, Hashable, Sendable {
         compatBaseURL = try c.decodeIfPresent(String.self, forKey: .compatBaseURL) ?? d.compatBaseURL
         compatAPIKey = try c.decodeIfPresent(String.self, forKey: .compatAPIKey) ?? d.compatAPIKey
         compatModel = try c.decodeIfPresent(String.self, forKey: .compatModel) ?? d.compatModel
+        enableDTW = try c.decodeIfPresent(Bool.self, forKey: .enableDTW) ?? d.enableDTW
+        sherpaModelDir = try c.decodeIfPresent(String.self, forKey: .sherpaModelDir) ?? d.sherpaModelDir
+        mlxModel = try c.decodeIfPresent(String.self, forKey: .mlxModel) ?? d.mlxModel
     }
 }
 
@@ -155,13 +171,17 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
     public var style: TranslationStyle
     /// 自动扩译：填不满时间窗的单元定向扩写
     public var autoExpand: Bool
+    /// 自动缩译：超出时间窗预算过多的超长句定向精简（与 autoExpand 构成双向时长闭环）
+    public var autoCompress: Bool
+    /// 音节可控翻译的目标语速（每秒音节/汉字数，供 Index-Homura 及播客节奏预算使用）
+    public var targetSyllablesPerSec: Double
     /// 翻译时注入术语表（需 summarize 步骤产物 terminology.json）
     public var useTerminology: Bool
     /// 翻译质量模式
     public var quality: TranslationQuality
     /// 目标语言（ISO 639-1；zh 之外也可用于产出外挂字幕）
     public var targetLanguage: String
-    /// OpenAI / 标准协议兼容翻译引擎参数（engines.translate == "compat" 时生效）
+    /// OpenAI / 标准协议兼容翻译引擎参数（engines.translate == "compat" / "homura" 时生效）
     public var compatBaseURL: String
     public var compatAPIKey: String
     public var compatModel: String
@@ -178,6 +198,7 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
                 model: String = "friday-personal/deepseek-v4-flash",
                 batchSize: Int = 20, concurrency: Int = 4,
                 style: TranslationStyle = .narrator, autoExpand: Bool = true,
+                autoCompress: Bool = true, targetSyllablesPerSec: Double = 4.2,
                 useTerminology: Bool = true, quality: TranslationQuality = .singlePass,
                 targetLanguage: String = "zh",
                 compatBaseURL: String = "https://api.openai.com/v1",
@@ -186,6 +207,7 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
                 terminology: [TerminologyTerm]? = nil, domain: DomainContext? = nil) {
         self.endpoint = endpoint; self.model = model; self.batchSize = batchSize
         self.concurrency = concurrency; self.style = style; self.autoExpand = autoExpand
+        self.autoCompress = autoCompress; self.targetSyllablesPerSec = targetSyllablesPerSec
         self.useTerminology = useTerminology; self.quality = quality
         self.targetLanguage = targetLanguage
         self.compatBaseURL = compatBaseURL; self.compatAPIKey = compatAPIKey; self.compatModel = compatModel
@@ -196,6 +218,7 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case endpoint, model, batchSize, concurrency, style, autoExpand
+        case autoCompress, targetSyllablesPerSec
         case useTerminology, quality, targetLanguage
         case compatBaseURL, compatAPIKey, compatModel, compatProtocol, apiKey
     }
@@ -209,6 +232,8 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
         concurrency = try c.decodeIfPresent(Int.self, forKey: .concurrency) ?? d.concurrency
         style = try c.decodeIfPresent(TranslationStyle.self, forKey: .style) ?? d.style
         autoExpand = try c.decodeIfPresent(Bool.self, forKey: .autoExpand) ?? d.autoExpand
+        autoCompress = try c.decodeIfPresent(Bool.self, forKey: .autoCompress) ?? d.autoCompress
+        targetSyllablesPerSec = try c.decodeIfPresent(Double.self, forKey: .targetSyllablesPerSec) ?? d.targetSyllablesPerSec
         useTerminology = try c.decodeIfPresent(Bool.self, forKey: .useTerminology) ?? d.useTerminology
         quality = try c.decodeIfPresent(TranslationQuality.self, forKey: .quality) ?? d.quality
         targetLanguage = try c.decodeIfPresent(String.self, forKey: .targetLanguage) ?? d.targetLanguage
@@ -230,6 +255,8 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
         try c.encode(concurrency, forKey: .concurrency)
         try c.encode(style, forKey: .style)
         try c.encode(autoExpand, forKey: .autoExpand)
+        try c.encode(autoCompress, forKey: .autoCompress)
+        try c.encode(targetSyllablesPerSec, forKey: .targetSyllablesPerSec)
         try c.encode(useTerminology, forKey: .useTerminology)
         try c.encode(quality, forKey: .quality)
         try c.encode(targetLanguage, forKey: .targetLanguage)
@@ -273,11 +300,23 @@ public struct SynthOptions: Codable, Hashable, Sendable {
     public var edgeVoice: String
     /// Edge TTS 请求代理（空 = 直连；edge-tts 不读环境变量，由引擎透传）
     public var edgeProxy: String
-    // 本地 TTS（engines.synthesize == "local-say" / "sherpa-onnx" 时生效）
-    /// macOS say 音色（如 Tingting、Mei-Jia）；空 = 默认 Tingting
+    // 本地 TTS（engines.synthesize == "local-say" / "sherpa-onnx" / "mlx-tts" 时生效）
+    /// macOS say 音色（如 Tingting、Mei-Jia）或 Kokoro 说话人（如 zf_001、zm_010）；空 = 默认
     public var localVoice: String
-    /// Sherpa-Onnx 模型目录（含 model.onnx、tokens.txt、dict/ 等）；空 = 未配置
+    /// Sherpa-Onnx 模型目录或预设名（如 kokoro-multi-lang-v1_1 / zipvoice / vits-zh-hf-theresa）；空 = 默认
     public var sherpaOnnxModelDir: String
+    /// Apple Silicon MLX TTS 模型仓库（如 mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit）
+    public var mlxModel: String
+    /// MLX TTS 播客音色名或自然语言风格描述（如 "Dylan" 或 "Dylan, 沉稳自然的中文科技播客男主播"）
+    public var mlxVoice: String
+    /// 中文播客长句连读模式：放宽 ClauseTextSplitter 整句不拆阈值（16 → 38 字），保留整句呼吸与语调起伏
+    public var podcastMode: Bool
+    /// 零样本原声复刻：自动从源片人声轨选取清晰片段克隆原博主音色（ZipVoice / Qwen3-TTS 生效）
+    public var cloneSourceVoice: Bool
+    /// 零样本音色克隆的参考音频路径（16k/24k wav；空且开启 cloneSourceVoice 时由管线自动提取）
+    public var referenceAudioPath: String
+    /// 零样本音色克隆的参考音频对应文本
+    public var referenceText: String
 
     /// 生效语速范围（GUI 滑块、钳制、文档共用）
     public static let rateMin: Double = 0.5
@@ -298,6 +337,12 @@ public struct SynthOptions: Codable, Hashable, Sendable {
                 edgeProxy: String = "http://127.0.0.1:7890",
                 localVoice: String = "Tingting",
                 sherpaOnnxModelDir: String = "",
+                mlxModel: String = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+                mlxVoice: String = "Dylan",
+                podcastMode: Bool = false,
+                cloneSourceVoice: Bool = false,
+                referenceAudioPath: String = "",
+                referenceText: String = "",
                 rate: Double = 1.0) {
         self.apiKey = apiKey; self.wsURL = wsURL; self.model = model
         self.voice = voice; self.rps = rps
@@ -305,13 +350,20 @@ public struct SynthOptions: Codable, Hashable, Sendable {
         self.compatTTSModel = compatTTSModel; self.edgeVoice = edgeVoice
         self.edgeProxy = edgeProxy
         self.localVoice = localVoice; self.sherpaOnnxModelDir = sherpaOnnxModelDir
+        self.mlxModel = mlxModel; self.mlxVoice = mlxVoice
+        self.podcastMode = podcastMode
+        self.cloneSourceVoice = cloneSourceVoice
+        self.referenceAudioPath = referenceAudioPath
+        self.referenceText = referenceText
         self.rate = rate
     }
 
     private enum CodingKeys: String, CodingKey {
         case apiKey, wsURL, model, voice, rps
         case compatBaseURL, compatAPIKey, compatTTSModel, edgeVoice, edgeProxy
-        case localVoice, sherpaOnnxModelDir, rate
+        case localVoice, sherpaOnnxModelDir
+        case mlxModel, mlxVoice, podcastMode, cloneSourceVoice, referenceAudioPath, referenceText
+        case rate
     }
 
     public init(from decoder: Decoder) throws {
@@ -329,6 +381,12 @@ public struct SynthOptions: Codable, Hashable, Sendable {
         edgeProxy = try c.decodeIfPresent(String.self, forKey: .edgeProxy) ?? d.edgeProxy
         localVoice = try c.decodeIfPresent(String.self, forKey: .localVoice) ?? d.localVoice
         sherpaOnnxModelDir = try c.decodeIfPresent(String.self, forKey: .sherpaOnnxModelDir) ?? d.sherpaOnnxModelDir
+        mlxModel = try c.decodeIfPresent(String.self, forKey: .mlxModel) ?? d.mlxModel
+        mlxVoice = try c.decodeIfPresent(String.self, forKey: .mlxVoice) ?? d.mlxVoice
+        podcastMode = try c.decodeIfPresent(Bool.self, forKey: .podcastMode) ?? d.podcastMode
+        cloneSourceVoice = try c.decodeIfPresent(Bool.self, forKey: .cloneSourceVoice) ?? d.cloneSourceVoice
+        referenceAudioPath = try c.decodeIfPresent(String.self, forKey: .referenceAudioPath) ?? d.referenceAudioPath
+        referenceText = try c.decodeIfPresent(String.self, forKey: .referenceText) ?? d.referenceText
         rate = try c.decodeIfPresent(Double.self, forKey: .rate) ?? d.rate
     }
 }
@@ -346,22 +404,25 @@ public struct ScheduleOptions: Codable, Hashable, Sendable {
     /// 支持 → 1.0（合成产物已含目标语速）；不支持 → 合成语速，由 atempo 兑现）。
     /// 一般不由用户直接设置；想改语速请用 synth.rate。
     public var rate: Double
+    /// 播客长句模式（与 synth.podcastMode 同步，控制子句切分粒度）
+    public var podcastMode: Bool
 
     public init(driftCap: Double = 1.2, lagCap: Double = 0.8, unitGap: Double = 0.25,
                 pauseMin: Double = 0.25, pauseMax: Double = 1.3,
                 slowMax: Double = 1.15, fastMax: Double = 1.3, slidePreviewRange: Int = 0,
-                rate: Double = 1.0) {
+                rate: Double = 1.0, podcastMode: Bool = false) {
         self.driftCap = driftCap; self.lagCap = lagCap; self.unitGap = unitGap
         self.pauseMin = pauseMin; self.pauseMax = pauseMax
         self.slowMax = slowMax; self.fastMax = fastMax
         self.slidePreviewRange = slidePreviewRange
         self.rate = rate
+        self.podcastMode = podcastMode
     }
 
     /// 自定义解码：旧模板 JSON 的 schedule 对象无 rate 键时取默认 1.0
     /// （ synthesized decode 会因缺键直接抛错，破坏旧模板加载）
     private enum CodingKeys: String, CodingKey {
-        case driftCap, lagCap, unitGap, pauseMin, pauseMax, slowMax, fastMax, slidePreviewRange, rate
+        case driftCap, lagCap, unitGap, pauseMin, pauseMax, slowMax, fastMax, slidePreviewRange, rate, podcastMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -376,6 +437,7 @@ public struct ScheduleOptions: Codable, Hashable, Sendable {
         fastMax = try c.decodeIfPresent(Double.self, forKey: .fastMax) ?? d.fastMax
         slidePreviewRange = try c.decodeIfPresent(Int.self, forKey: .slidePreviewRange) ?? d.slidePreviewRange
         rate = try c.decodeIfPresent(Double.self, forKey: .rate) ?? d.rate
+        podcastMode = try c.decodeIfPresent(Bool.self, forKey: .podcastMode) ?? d.podcastMode
     }
 }
 
@@ -555,7 +617,31 @@ public struct Profile: Codable, Hashable, Sendable {
         return p
     }()
 
-    public static let builtins: [Profile] = [.balanced, .tightSync, .relaxed, .subtitlesOnly, .studied, .keepBGM]
+    /// 本地播客（Apple Silicon 全离线）：large-v3-turbo DTW + 音节可控翻译 + Kokoro/MLX 播客连读
+    public static let localPodcast: Profile = {
+        var p = Profile(
+            name: "本地播客（Apple Silicon）",
+            blurb: "针对 M 系芯片优化：Whisper Turbo DTW 词级转录 + 音节可控本地翻译 + Kokoro 中英混读播客合成（整句长连读）"
+        )
+        p.engines[StepID.separate.rawValue] = "demucs"
+        p.engines[StepID.transcribe.rawValue] = "whisper-native"
+        p.engines[StepID.translate.rawValue] = "homura"
+        p.engines[StepID.synthesize.rawValue] = "sherpa-onnx"
+        p.transcribe.modelPath = "ggml-large-v3-turbo-q5_0.bin"
+        p.transcribe.enableDTW = true
+        p.translate.compatBaseURL = "http://127.0.0.1:11434/v1"
+        p.translate.compatModel = "IndexTeam/Index-Homura-9B"
+        p.translate.style = .narrator
+        p.translate.autoExpand = true
+        p.translate.autoCompress = true
+        p.synth.sherpaOnnxModelDir = "kokoro-multi-lang-v1_1"
+        p.synth.localVoice = "zm_010"
+        p.synth.podcastMode = true
+        p.compose.keepBGM = true
+        return p
+    }()
+
+    public static let builtins: [Profile] = [.balanced, .tightSync, .relaxed, .subtitlesOnly, .studied, .keepBGM, .localPodcast]
 
     /// 以某模板为起点派生
     public func derived(named newName: String) -> Profile {

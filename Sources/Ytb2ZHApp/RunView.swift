@@ -24,6 +24,9 @@ final class PipelineJob: ObservableObject {
     func start(url: String, profile: Profile, jobID resumeID: String? = nil,
                stepFilter: Set<StepID> = [], trialSeconds: Int? = nil) {
         guard !running else { return }
+        var adjustedProfile = profile
+        if LocalMediaSource.url(for: url) != nil { adjustedProfile.engines["download"] = "file" }
+        let profile = adjustedProfile
         running = true; error = nil; outputURL = nil
         logLines = []; stepProgress = [:]
 

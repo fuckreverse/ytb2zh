@@ -13,18 +13,21 @@ public enum EngineAssembly {
             .init(step: .separate, descriptors: [
                 NullVocalSeparator().descriptor, NativeDemucsSeparator().descriptor]),
             .init(step: .transcribe, descriptors: [
-                NativeWhisperEngine().descriptor, WhisperCliEngine().descriptor,
+                NativeWhisperEngine().descriptor, SherpaOnnxASREngine().descriptor,
+                MLXAudioASREngine().descriptor, WhisperCliEngine().descriptor,
                 OpenAITranscribeEngine().descriptor, SrtTranscribeEngine().descriptor]),
             .init(step: .segment, descriptors: [
                 PunctSegmentationEngine().descriptor, LLMSegmentationEngine().descriptor]),
             .init(step: .summarize, descriptors: [
                 NullTerminologyEngine().descriptor, GatewayTerminologyEngine().descriptor]),
             .init(step: .translate, descriptors: [
-                GatewayTranslateEngine().descriptor, OpenAICompatTranslateEngine().descriptor]),
+                GatewayTranslateEngine().descriptor, OpenAICompatTranslateEngine().descriptor,
+                IndexHomuraTranslateEngine().descriptor]),
             .init(step: .synthesize, descriptors: [
                 BailianSynthEngine().descriptor, OpenAITTSEngine().descriptor,
                 EdgeTTSEngine().descriptor, LocalSayTTSEngine().descriptor,
-                SherpaOnnxTTSEngine().descriptor, NullSynthEngine().descriptor]),
+                SherpaOnnxTTSEngine().descriptor, MLXAudioTTSEngine().descriptor,
+                NullSynthEngine().descriptor]),
             .init(step: .schedule, descriptors: [
                 DriftSchedulerEngine().descriptor, NullSchedulerEngine().descriptor]),
             .init(step: .compose, descriptors: [
@@ -52,6 +55,8 @@ public enum EngineAssembly {
         let transcriber: any TranscribeEngine = {
             switch id(.transcribe, "whisper-native") {
             case "whisper-cpp": WhisperCliEngine()      // 旧 sidecar，向后兼容
+            case "sherpa-asr": SherpaOnnxASREngine()    // 内嵌 Sherpa-Onnx 离线 ASR（Parakeet / SenseVoice / Qwen3-ASR）
+            case "mlx-asr": MLXAudioASREngine()         // Apple Silicon MLX Qwen3-ASR
             case "openai-asr": OpenAITranscribeEngine() // OpenAI 兼容 /v1/audio/transcriptions
             case "srt": SrtTranscribeEngine()
             case "whisper-native": NativeWhisperEngine() // 默认：内嵌 whisper.cpp，零外部二进制
@@ -60,13 +65,20 @@ public enum EngineAssembly {
         }()
         let segmenter: any SegmentationEngine = id(.segment, "punct") == "llm-seg" ? LLMSegmentationEngine() : PunctSegmentationEngine()
         let terminologist: (any TerminologyEngine)? = id(.summarize, "none") == "gateway-terms" ? GatewayTerminologyEngine() : nil
-        let translator: any TranslateEngine = id(.translate, "gateway") == "compat" ? OpenAICompatTranslateEngine() : GatewayTranslateEngine()
+        let translator: any TranslateEngine = {
+            switch id(.translate, "gateway") {
+            case "compat": OpenAICompatTranslateEngine()
+            case "homura": IndexHomuraTranslateEngine()
+            default: GatewayTranslateEngine()
+            }
+        }()
         let synthesizer: any SpeechSynthesisEngine = {
             switch id(.synthesize, "bailian") {
             case "openai-tts": OpenAITTSEngine()
             case "edge-tts": EdgeTTSEngine()
             case "local-say": LocalSayTTSEngine()
             case "sherpa-onnx": SherpaOnnxTTSEngine()
+            case "mlx-tts": MLXAudioTTSEngine()
             case "none": NullSynthEngine()
             default: BailianSynthEngine()
             }

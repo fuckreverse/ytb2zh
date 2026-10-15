@@ -571,6 +571,76 @@ final class TranslateCoreTests: XCTestCase {
         XCTAssertEqual(calls.wrapped, 1)
         XCTAssertEqual(out[0].zh, "哈喽大家好呀今天天气不错")
     }
+
+    /// 超长句定向精简：译文远超时间窗容量（> 时长×5.5 字且时长 ≥ 2.5s）时自动发一次精简请求
+    func testLongSentenceCompression() async throws {
+        let units = [SpeechUnit(start: 0, end: 3.0, en: "This is a quick intro.")]
+        var opts = TranslateOptions(batchSize: 10, concurrency: 1)
+        opts.autoExpand = true
+        opts.autoCompress = true
+        let calls = Mutex(0)
+        let overlyLong = "这是一段非常非常冗长啰嗦的中文翻译句子，字数远远超过了三秒钟能自然念完的上限"
+        let concise = "这是一段简洁自然的开场介绍"
+        let out = try await TranslateCore.runTranslate(units: units, options: opts, progress: { _, _ in }) { system, user in
+            let c = calls.with { v -> Int in v += 1; return v }
+            if c == 1 {
+                return "[{\"i\":0,\"zh\":\"\(overlyLong)\"}]"
+            }
+            XCTAssertTrue(system.contains("精简师"))
+            XCTAssertTrue(user.contains("目标约12字"))
+            return "[{\"i\":0,\"zh\":\"\(concise)\"}]"
+        }
+        XCTAssertEqual(calls.wrapped, 2)
+        XCTAssertEqual(out[0].zh, concise)
+    }
+
+    /// Index-Homura 音节计算与官方受控翻译 Prompt 组装
+    func testIndexHomuraSyllableAndPrompt() {
+        XCTAssertEqual(IndexHomuraTranslateEngine.targetSyllableCount(duration: 4.0, syllablesPerSec: 4.2), 17)
+        // 纯中文：7 个汉字 = 7 音节
+        XCTAssertEqual(IndexHomuraTranslateEngine.countSyllables("今天我们聊大模型"), 8)
+        // 中英混读：LLM（3字母缩写=3音节）+ 的安全（3汉字=3音节）= 6 音节
+        XCTAssertEqual(IndexHomuraTranslateEngine.countSyllables("LLM的安全"), 6)
+
+        let terms = [
+            TerminologyTerm(en: "Prompt Injection", zh: "提示词注入"),
+            TerminologyTerm(en: "UnusedTerm", zh: "未命中术语"),
+        ]
+        let prompt = IndexHomuraTranslateEngine.buildHomuraPrompt(
+            sourceText: "How does Prompt Injection work in practice?",
+            targetLanguage: "zh",
+            targetSyllables: 15,
+            terminology: terms)
+        XCTAssertTrue(prompt.contains("译文严格控制在 15 个音节"))
+        XCTAssertTrue(prompt.contains("- Prompt Injection -> 提示词注入"))
+        XCTAssertFalse(prompt.contains("UnusedTerm"), "未在当前句出现的术语不应注入，防止干扰小模型")
+        XCTAssertTrue(prompt.contains("直接输出翻译结果，不要进行任何解释。"))
+    }
+
+    /// MLX TTS 与 ASR 参数构造验证
+    func testMLXAudioCLIAndScriptBuilders() {
+        var opts = SynthOptions()
+        opts.mlxModel = "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"
+        opts.mlxVoice = "Dylan, 沉稳自然的中文科技播客男主播"
+        opts.rate = 1.15
+        opts.referenceAudioPath = "/tmp/ref.wav"
+        opts.referenceText = "Hello world."
+        let args = MLXAudioTTSEngine.buildCLIArguments(text: "你好，欢迎收听本期播客", outputPrefix: "/tmp/out", options: opts)
+        XCTAssertTrue(args.contains("--model"))
+        XCTAssertTrue(args.contains("mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit"))
+        XCTAssertTrue(args.contains("--ref_audio"))
+        XCTAssertTrue(args.contains("/tmp/ref.wav"))
+        XCTAssertTrue(args.contains("--ref_text"))
+        XCTAssertTrue(args.contains("1.15"))
+
+        let script = MLXAudioASREngine.buildASRScript(
+            audioPath: "/tmp/in.wav",
+            modelRepo: "mlx-community/Qwen3-ASR-1.7B-4bit",
+            language: "en",
+            outputJSONPath: "/tmp/out.json")
+        XCTAssertTrue(script.contains("mlx-community/Qwen3-ASR-1.7B-4bit"))
+        XCTAssertTrue(script.contains("from mlx_audio.stt.utils import load_model"))
+    }
 }
 
 // MARK: - 本地 TTS 引擎

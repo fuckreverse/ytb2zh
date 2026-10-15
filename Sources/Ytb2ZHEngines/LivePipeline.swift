@@ -119,7 +119,7 @@ public struct LivePipeline: Sendable {
             // 不支持的由调度层 atempo 兜底（见下方 schedOpts.rate）
             let clauseCacheDir = store.clauseCache(jobID, rate: profile.synth.effectiveRate)
             try fm.createDirectory(at: clauseCacheDir, withIntermediateDirectories: true)
-            let splitter = ClauseTextSplitter()
+            let splitter = ClauseTextSplitter(podcastMode: profile.synth.podcastMode)
 
             var placements: [Placement] = []
             var unitSchedules: [UnitSchedule] = []
@@ -198,6 +198,7 @@ public struct LivePipeline: Sendable {
                 // 引擎原生支持语速 → 合成产物已含目标语速，不叠加；否则把语速折算进 atempo
                 schedOpts.rate = engines.synthesizer.supportsRateControl
                     ? 1.0 : profile.synth.effectiveRate
+                schedOpts.podcastMode = profile.synth.podcastMode
                 var plan = engines.scheduler.schedule(
                     units: winUnits, clauseDurations: clauseDurations, options: schedOpts)
                 if let first = plan.placements.first,

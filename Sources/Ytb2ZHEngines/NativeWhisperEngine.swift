@@ -41,17 +41,40 @@ public struct NativeWhisperEngine: TranscribeEngine, @unchecked Sendable {
         // 4) whisper 全量转录（重 CPU，独立线程跑，避免占死协作线程池）
         progress(0.09, "开始转录（内嵌 Metal 加速）")
         let language = options.language
-        let words = try await runWhisper(modelPath: model, samples: samples, language: language) { frac in
+        let enableDTW = options.enableDTW
+        let words = try await runWhisper(
+            modelPath: model, samples: samples, language: language, enableDTW: enableDTW
+        ) { frac in
             progress(0.09 + frac * 0.89, "转录中 \(Int(frac * 100))%")
         }
         progress(1.0, "\(words.count) 词")
         return words
     }
 
+    /// 根据模型文件名推断对应的 DTW 交叉注意力头预设（whisper_alignment_heads_preset）
+    public static func dtwPreset(for modelPath: String) -> whisper_alignment_heads_preset {
+        let name = (modelPath as NSString).lastPathComponent.lowercased()
+        if name.contains("large-v3-turbo") || name.contains("large-v3_turbo") {
+            return WHISPER_AHEADS_LARGE_V3_TURBO
+        }
+        if name.contains("large-v3") { return WHISPER_AHEADS_LARGE_V3 }
+        if name.contains("large-v2") { return WHISPER_AHEADS_LARGE_V2 }
+        if name.contains("large-v1") || name.contains("large.") { return WHISPER_AHEADS_LARGE_V1 }
+        if name.contains("medium.en") { return WHISPER_AHEADS_MEDIUM_EN }
+        if name.contains("medium") { return WHISPER_AHEADS_MEDIUM }
+        if name.contains("small.en") { return WHISPER_AHEADS_SMALL_EN }
+        if name.contains("small") { return WHISPER_AHEADS_SMALL }
+        if name.contains("base.en") { return WHISPER_AHEADS_BASE_EN }
+        if name.contains("base") { return WHISPER_AHEADS_BASE }
+        if name.contains("tiny.en") { return WHISPER_AHEADS_TINY_EN }
+        if name.contains("tiny") { return WHISPER_AHEADS_TINY }
+        return WHISPER_AHEADS_N_TOP_MOST
+    }
+
     // MARK: - whisper.cpp 调用
 
     private func runWhisper(
-        modelPath: String, samples: [Float], language: String,
+        modelPath: String, samples: [Float], language: String, enableDTW: Bool = true,
         onProgress: @escaping @Sendable (Double) -> Void
     ) async throws -> [TimedWord] {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[TimedWord], Error>) in
@@ -65,9 +88,17 @@ public struct NativeWhisperEngine: TranscribeEngine, @unchecked Sendable {
                 }
                 let box = ProgressBox(onProgress)
                 do {
-                    var cparams = whisper_context_params()  // 零值初始化
+                    var cparams = whisper_context_default_params()
                     cparams.use_gpu = true
                     cparams.flash_attn = true
+                    if enableDTW {
+                        let preset = Self.dtwPreset(for: modelPath)
+                        cparams.dtw_token_timestamps = true
+                        cparams.dtw_aheads_preset = preset
+                        if cparams.dtw_mem_size == 0 {
+                            cparams.dtw_mem_size = 1024 * 1024 * 128
+                        }
+                    }
                     guard let c = whisper_init_from_file_with_params_no_state(modelPath, cparams) else {
                         throw EngineError.engineFailure("whisper 模型加载失败（路径或格式非法）：\(modelPath)")
                     }
@@ -108,8 +139,9 @@ public struct NativeWhisperEngine: TranscribeEngine, @unchecked Sendable {
                         _ = whisper_full_with_state(c, st, params, base, Int32(samples.count))
                     }
 
-                    // 收词级时间戳（t0/t1 单位：1/100 秒）
+                    // 收词级时间戳（t0/t1/t_dtw 单位：1/100 秒）
                     var words: [TimedWord] = []
+                    var prevEnd: Double = 0
                     let nSeg = whisper_full_n_segments_from_state(st)
                     for i in 0..<nSeg {
                         let nTok = whisper_full_n_tokens_from_state(st, i)
@@ -117,8 +149,19 @@ public struct NativeWhisperEngine: TranscribeEngine, @unchecked Sendable {
                             guard let textC = whisper_full_get_token_text_from_state(c, st, i, j) else { continue }
                             let text = String(cString: textC).trimmingCharacters(in: .whitespaces)
                             guard !text.isEmpty, !text.hasPrefix("[_"), text != "[_TT_]" && text != "[_TA_]" else { continue }
-                            let t0 = Double(whisper_full_get_token_t0_from_state(st, i, j)) / 100.0
-                            let t1 = Double(whisper_full_get_token_t1_from_state(st, i, j)) / 100.0
+                            let tdata = whisper_full_get_token_data_from_state(st, i, j)
+                            var t0 = Double(tdata.t0) / 100.0
+                            var t1 = Double(tdata.t1) / 100.0
+                            if enableDTW && tdata.t_dtw > 0 {
+                                let dtwEnd = Double(tdata.t_dtw) / 100.0
+                                let estDur = max(0.04, min(0.8, t1 - t0))
+                                t0 = max(prevEnd, max(0, dtwEnd - estDur))
+                                t1 = max(t0 + 0.02, dtwEnd)
+                            } else {
+                                t0 = max(prevEnd, t0)
+                                t1 = max(t0 + 0.02, t1)
+                            }
+                            prevEnd = t1
                             words.append(TimedWord(start: t0, end: t1, text: text))
                         }
                     }

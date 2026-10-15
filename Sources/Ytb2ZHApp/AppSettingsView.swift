@@ -12,6 +12,7 @@ import Ytb2ZHEngines
 struct AppSettingsView: View {
     enum Tab: String, CaseIterable, Identifiable {
         case network = "网络设置"
+        case localModels = "本地模型"
         case providers = "模型提供商"
         case assign = "模型分配"
         var id: String { rawValue }
@@ -22,7 +23,7 @@ struct AppSettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PageHeading(title: "设置你的译配工作空间", subtitle: "管理网络、模型服务与处理能力")
+            PageHeading(title: "设置你的译配工作空间", subtitle: "管理网络、本地模型中心、云端服务与处理能力")
                 .padding(24)
             CinemaTabs(values: Tab.allCases, selection: $tab, title: { $0.rawValue })
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -32,6 +33,7 @@ struct AppSettingsView: View {
 
             switch tab {
             case .network: NetworkTab()
+            case .localModels: LocalModelsTab()
             case .providers: ProvidersTab(store: store)
             case .assign: AssignTab(store: store)
             }
@@ -1228,4 +1230,191 @@ private struct AssignTab: View {
 
 extension ProviderConfig {
     var displayName: String { name.isEmpty ? "未命名提供商" : name }
+}
+
+// MARK: - 分页 4：Apple Silicon 本地模型中心（零命令行一键管理）
+
+private struct LocalModelsTab: View {
+    @State private var items: [ModelStore.LocalModelItem] = ModelStore.inspectLocalModels()
+    @State private var activeDownloads: [String: (progress: Double, message: String)] = [:]
+    @State private var errorMessages: [String: String] = [:]
+    @State private var mlxReady: Bool = MLXRuntimeLocator.isReady
+    @State private var mlxInstalling: Bool = false
+    @State private var mlxStatusMessage: String = ""
+
+    private var llmRuntime: (llamaServerPath: String?, ollamaPath: String?) {
+        LocalLLMManager.runtimeStatus()
+    }
+
+    var body: some View {
+        CinemaForm {
+            CinemaSection("Apple Silicon 本地推理底座（零配置开箱即用）") {
+                LabeledContent("内嵌 Whisper + DTW") {
+                    Label("已内置（Metal GPU 硬件加速）", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                }
+                LabeledContent("内嵌 Sherpa-Onnx v1.13.8") {
+                    Label("已内置（支持 Kokoro 播客 / ZipVoice 克隆 / Parakeet 识别）", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                }
+                LabeledContent("本地翻译运行时 (Ollama / llama.cpp)") {
+                    if llmRuntime.llamaServerPath != nil || llmRuntime.ollamaPath != nil {
+                        Label("已就绪（自动托管并导入 Index-Homura-2B GGUF）", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Label("未检测到 Ollama / llama.cpp（将自动无感回退网关双向时长控制）", systemImage: "info.circle")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                LabeledContent("MLX 原生语音环境 (Qwen3-TTS / ASR)") {
+                    HStack(spacing: 10) {
+                        if mlxReady {
+                            Label("已就绪 (~/.ytb2zh/mlx-venv)", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else if mlxInstalling {
+                            ProgressView().controlSize(.small)
+                            Text(mlxStatusMessage.isEmpty ? "正在配置…" : mlxStatusMessage)
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text("首次使用自动安装，也可点击右侧按钮提前就绪")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button("一键配置 MLX 环境") {
+                                installMLXEnvironment()
+                            }
+                        }
+                    }
+                }
+                HStack(spacing: 12) {
+                    Button("一键预下载「本地播客」全套推荐模型") {
+                        for id in ["whisper-turbo-q5", "kokoro-v1_1", "demucs-htdemucs"] {
+                            let item = items.first { $0.id == id }
+                            if item?.isInstalled == false && activeDownloads[id] == nil {
+                                startDownload(id: id)
+                            }
+                        }
+                    }
+                    .buttonStyle(CinemaButtonStyle(prominent: true))
+
+                    Button {
+                        let url = URL(fileURLWithPath: ModelStore.root)
+                        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(url)
+                    } label: {
+                        Label("打开模型目录 (~/.ytb2zh/models)", systemImage: "folder")
+                    }
+
+                    Button("刷新状态") {
+                        items = ModelStore.inspectLocalModels()
+                        mlxReady = MLXRuntimeLocator.isReady
+                    }
+                }
+                .padding(.top, 4)
+            }
+
+            ForEach(["语音识别 (ASR)", "语音合成 (TTS)", "音节受控翻译", "人声分离 (BGM保留)"], id: \.self) { category in
+                CinemaSection(category) {
+                    ForEach(items.filter { $0.category == category }) { item in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .center, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 8) {
+                                        Text(item.title)
+                                            .font(.body.weight(.medium))
+                                        if item.isInstalled {
+                                            Text("已就绪 · \(item.installedSizeMB) MB")
+                                                .font(.caption2)
+                                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                                .background(Color.green.opacity(0.16))
+                                                .foregroundStyle(.green)
+                                                .clipShape(Capsule())
+                                        } else {
+                                            Text("约 \(item.estimatedSizeMB) MB · 用时自动下载")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    Text(item.subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if let dl = activeDownloads[item.id] {
+                                    VStack(alignment: .trailing, spacing: 4) {
+                                        ProgressView(value: dl.progress)
+                                            .frame(width: 140)
+                                        Text(dl.message)
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                } else if item.isInstalled {
+                                    Button("重新校验") {
+                                        items = ModelStore.inspectLocalModels()
+                                    }
+                                    .controlSize(.small)
+                                } else {
+                                    Button("立即预下载") {
+                                        startDownload(id: item.id)
+                                    }
+                                    .controlSize(.small)
+                                }
+                            }
+                            if let err = errorMessages[item.id] {
+                                Text(err)
+                                    .font(.caption2)
+                                    .foregroundStyle(.red)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+    }
+
+    private func startDownload(id: String) {
+        errorMessages.removeValue(forKey: id)
+        activeDownloads[id] = (0.02, "准备下载…")
+        let proxy = AppSettings.effectiveProxy(fallback: "", scope: .download)
+        Task {
+            do {
+                try await ModelStore.downloadLocalModel(id: id, proxy: proxy) { frac, msg in
+                    Task { @MainActor in
+                        activeDownloads[id] = (max(0.05, frac), msg)
+                    }
+                }
+                await MainActor.run {
+                    activeDownloads.removeValue(forKey: id)
+                    items = ModelStore.inspectLocalModels()
+                }
+            } catch {
+                await MainActor.run {
+                    activeDownloads.removeValue(forKey: id)
+                    errorMessages[id] = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func installMLXEnvironment() {
+        mlxInstalling = true
+        mlxStatusMessage = "准备创建虚拟环境…"
+        Task {
+            do {
+                _ = try await MLXRuntimeLocator.ensureInstalled { msg in
+                    Task { @MainActor in
+                        mlxStatusMessage = msg
+                    }
+                }
+                await MainActor.run {
+                    mlxInstalling = false
+                    mlxReady = true
+                }
+            } catch {
+                await MainActor.run {
+                    mlxInstalling = false
+                    mlxStatusMessage = error.localizedDescription
+                }
+            }
+        }
+    }
 }

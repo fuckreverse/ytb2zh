@@ -267,11 +267,17 @@ struct SettingsPane: View {
             CinemaForm {
                 CinemaSection {
                     PageHeading(title: "把精彩内容，变成中文", subtitle: "选择视频与场景，译配完成后自动保存到媒体库")
-                    TextField("视频、频道或播放列表链接", text: $videoURL)
-                        .textFieldStyle(CinemaTextFieldStyle()).controlSize(.large)
+                    HStack {
+                        TextField("视频链接或本地视频路径", text: $videoURL)
+                            .textFieldStyle(CinemaTextFieldStyle()).controlSize(.large)
+                        LocalVideoPicker { file in
+                            videoURL = file.absoluteString
+                        }
+                        .buttonStyle(CinemaButtonStyle())
+                    }
                     VideoSourcePreview(source: videoURL, proxy: AppSettings.effectiveProxy(fallback: workingProfile.download.proxy))
                     if !videoURL.isEmpty {
-                        Label(VideoCatalogService.isLikelyListURL(videoURL) ? "频道与播放列表可在播放页展开浏览" : "视频链接已填入，可先试转 3 分钟", systemImage: "link")
+                        Label(VideoCatalogService.isLikelyListURL(videoURL) ? "频道与播放列表可在播放页展开浏览" : (LocalMediaSource.url(for: videoURL) != nil ? "本地视频已选定，可先试转 3 分钟" : "视频链接已填入，可先试转 3 分钟"), systemImage: "link")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

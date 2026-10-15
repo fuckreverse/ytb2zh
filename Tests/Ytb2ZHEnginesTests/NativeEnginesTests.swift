@@ -1,4 +1,5 @@
 import XCTest
+import whisper
 @testable import Ytb2ZHEngines
 import Ytb2ZHCore
 
@@ -74,14 +75,86 @@ final class NativeEnginesTests: XCTestCase {
         // 已知模型名（带不带 .bin 均可）→ 自身
         XCTAssertEqual(ModelStore.whisperRemoteName(for: "ggml-small.en"), "ggml-small.en.bin")
         XCTAssertEqual(ModelStore.whisperRemoteName(for: "ggml-base.en.bin"), "ggml-base.en.bin")
+        XCTAssertEqual(ModelStore.whisperRemoteName(for: "ggml-large-v3-turbo-q5_0.bin"), "ggml-large-v3-turbo-q5_0.bin")
+        XCTAssertEqual(ModelStore.whisperRemoteName(for: "ggml-large-v3-turbo"), "ggml-large-v3-turbo.bin")
         // 未知自定义路径 → nil（由调用方抛出带指引的错误）
         XCTAssertNil(ModelStore.whisperRemoteName(for: "/tmp/my-model.bin"))
     }
 
+    func testWhisperDTWPresetMapping() {
+        XCTAssertEqual(NativeWhisperEngine.dtwPreset(for: "/models/ggml-large-v3-turbo-q5_0.bin"),
+                       WHISPER_AHEADS_LARGE_V3_TURBO)
+        XCTAssertEqual(NativeWhisperEngine.dtwPreset(for: "ggml-large-v3.bin"),
+                       WHISPER_AHEADS_LARGE_V3)
+        XCTAssertEqual(NativeWhisperEngine.dtwPreset(for: "ggml-medium.en-q5_0.bin"),
+                       WHISPER_AHEADS_MEDIUM_EN)
+        XCTAssertEqual(NativeWhisperEngine.dtwPreset(for: "ggml-base.en.bin"),
+                       WHISPER_AHEADS_BASE_EN)
+    }
+
+    func testSherpaModelFamilyAndKokoroLexiconDetection() throws {
+        let fm = FileManager.default
+        let baseDir = fm.temporaryDirectory.appendingPathComponent("sherpa_fam_\(UUID().uuidString)", isDirectory: true)
+        defer { try? fm.removeItem(at: baseDir) }
+
+        // 1) Kokoro 目录检测与中英双词典拼接
+        let kokoroDir = baseDir.appendingPathComponent("kokoro", isDirectory: true)
+        try fm.createDirectory(at: kokoroDir, withIntermediateDirectories: true)
+        try Data([1]).write(to: kokoroDir.appendingPathComponent("model.onnx"))
+        try Data([1]).write(to: kokoroDir.appendingPathComponent("voices.bin"))
+        try Data([1]).write(to: kokoroDir.appendingPathComponent("lexicon-zh.txt"))
+        try Data([1]).write(to: kokoroDir.appendingPathComponent("lexicon-us-en.txt"))
+        XCTAssertEqual(SherpaOnnxTTSEngine.detectModelFamily(at: kokoroDir.path), .kokoro)
+        let lex = SherpaOnnxTTSEngine.kokoroLexiconPaths(at: kokoroDir.path)
+        XCTAssertTrue(lex.contains("lexicon-zh.txt"))
+        XCTAssertTrue(lex.contains("lexicon-us-en.txt"))
+
+        // 2) ZipVoice 目录检测
+        let zipDir = baseDir.appendingPathComponent("zipvoice", isDirectory: true)
+        try fm.createDirectory(at: zipDir, withIntermediateDirectories: true)
+        try Data([1]).write(to: zipDir.appendingPathComponent("encoder.int8.onnx"))
+        try Data([1]).write(to: zipDir.appendingPathComponent("decoder.int8.onnx"))
+        try Data([1]).write(to: zipDir.appendingPathComponent("vocos_24khz.onnx"))
+        XCTAssertEqual(SherpaOnnxTTSEngine.detectModelFamily(at: zipDir.path), .zipvoice)
+        XCTAssertTrue(ModelStore.isValidSherpaTTSModelDir(zipDir.path))
+
+        // 3) Speaker ID 解析
+        XCTAssertEqual(SherpaOnnxTTSEngine.resolveSpeakerID("zm_010"), 50)
+        XCTAssertEqual(SherpaOnnxTTSEngine.resolveSpeakerID("zf_001"), 45)
+        XCTAssertEqual(SherpaOnnxTTSEngine.resolveSpeakerID("48"), 48)
+    }
+
+    func testSherpaASRSubwordMerging() {
+        let tokens = ["▁Hello", ",", "▁this", "▁is", "▁Par", "akeet", "."]
+        let timestamps = [0.10, 0.45, 0.60, 0.85, 1.00, 1.15, 1.35]
+        let durations = [0.30, 0.05, 0.20, 0.15, 0.15, 0.20, 0.05]
+        let words = SherpaOnnxASREngine.buildTimedWords(
+            tokens: tokens, timestamps: timestamps, durations: durations, fallbackText: "")
+        XCTAssertEqual(words.count, 4)
+        XCTAssertEqual(words[0].text, " Hello,")
+        XCTAssertEqual(words[1].text, " this")
+        XCTAssertEqual(words[2].text, " is")
+        XCTAssertEqual(words[3].text, " Parakeet.")
+        XCTAssertEqual(words[3].start, 1.00, accuracy: 0.001)
+        XCTAssertEqual(words[3].end, 1.40, accuracy: 0.001)
+    }
+
     func testDefaultProfileAssembles() throws {
-        // 默认模板的引擎 id 必须全部可装配（装配期 validate 拦截不存在的 id）
+        // 默认模板与本地播客模板的引擎 id 必须全部可装配
         let engines = try EngineAssembly.engineSet(for: Profile.balanced)
         XCTAssertEqual(engines.transcriber.descriptor.id, "whisper-native")
+        let podcastEngines = try EngineAssembly.engineSet(for: Profile.localPodcast)
+        XCTAssertEqual(podcastEngines.translator.descriptor.id, "homura")
+        XCTAssertEqual(podcastEngines.synthesizer.descriptor.id, "sherpa-onnx")
+    }
+
+    func testInspectLocalModelsInventory() {
+        let items = ModelStore.inspectLocalModels()
+        XCTAssertGreaterThanOrEqual(items.count, 8)
+        XCTAssertTrue(items.contains { $0.id == "whisper-turbo-q5" })
+        XCTAssertTrue(items.contains { $0.id == "kokoro-v1_1" })
+        XCTAssertTrue(items.contains { $0.id == "zipvoice" })
+        XCTAssertTrue(items.contains { $0.id == "homura-2b-gguf" })
     }
 
     // MARK: - 真机冒烟（默认跳过：YTB2ZH_NATIVE_SMOKE=1 启用）

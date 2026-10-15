@@ -82,6 +82,22 @@ final class CoreTests: XCTestCase {
             "比如说我们今天要聊的这个话题有多重要，其实就是大模型的安全问题，对吧。")
         XCTAssertEqual(parts2.count, 2)
         XCTAssertTrue(parts2[1].hasSuffix("对吧。"))
+
+        // 播客长句模式（podcastMode = true，整句阈值 38 字）：32 字句子保持单条不拆，保留完整语调起伏
+        let podcastSentence = "比如说我们今天要聊的这个话题有多重要，其实就是大模型的安全问题，对吧。"
+        XCTAssertEqual(ClauseTextSplitter(podcastMode: true).split(podcastSentence), [podcastSentence])
+        XCTAssertEqual(ClauseTextSplitter.podcast.split(podcastSentence), [podcastSentence])
+    }
+
+    func testReferenceVoiceExtractorSelectBestUnit() {
+        let units = [
+            SpeechUnit(start: 0, end: 1.5, en: "Hi there."),
+            SpeechUnit(start: 2.0, end: 7.6, en: "Today we are going to explore how large language models work under the hood."),
+            SpeechUnit(start: 8.0, end: 22.0, en: "This is an extremely long sentence that goes on and on for fourteen seconds."),
+        ]
+        let best = ReferenceVoiceExtractor.selectBestUnit(from: units)
+        XCTAssertEqual(best?.start, 2.0)
+        XCTAssertEqual(best?.end, 7.6)
     }
 
     func testLegacyProfileDecode() throws {

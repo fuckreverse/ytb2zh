@@ -96,7 +96,11 @@ enum AppSettings {
                 p.translate.apiKey = pr.apiKey
                 p.translate.model = modelName
             case .openai, .anthropic, .gemini:
-                p.engines[StepID.translate.rawValue] = "compat"
+                if modelName.lowercased().contains("homura") {
+                    p.engines[StepID.translate.rawValue] = "homura"
+                } else {
+                    p.engines[StepID.translate.rawValue] = "compat"
+                }
                 p.translate.compatBaseURL = baseURL(pr)
                 p.translate.compatAPIKey = pr.apiKey
                 p.translate.compatModel = modelName
@@ -143,6 +147,16 @@ enum AppSettings {
                 if subEngine == "sherpa-onnx" {
                     p.engines[StepID.synthesize.rawValue] = "sherpa-onnx"
                     p.synth.sherpaOnnxModelDir = param
+                    if param.lowercased().contains("kokoro") || param.lowercased().contains("zipvoice") {
+                        p.synth.podcastMode = true
+                    }
+                    if param.lowercased().contains("zipvoice") {
+                        p.synth.cloneSourceVoice = true
+                    }
+                } else if subEngine == "mlx-tts" {
+                    p.engines[StepID.synthesize.rawValue] = "mlx-tts"
+                    if !param.isEmpty { p.synth.mlxModel = param }
+                    p.synth.podcastMode = true
                 } else {
                     // say 或未指定前缀 → macOS say 引擎
                     p.engines[StepID.synthesize.rawValue] = "local-say"
@@ -156,9 +170,17 @@ enum AppSettings {
             let modelName = mo.name.trimmingCharacters(in: .whitespaces)
             switch pr.kind {
             case .whisperLocal:
-                // whisper.cpp 已内嵌（进程内 Metal 推理）；mo.name 为模型名或路径，缺失时自动下载
-                p.engines[StepID.transcribe.rawValue] = "whisper-native"
-                p.transcribe.modelPath = modelName
+                if modelName.hasPrefix("sherpa-asr:") {
+                    p.engines[StepID.transcribe.rawValue] = "sherpa-asr"
+                    p.transcribe.sherpaModelDir = String(modelName.dropFirst("sherpa-asr:".count))
+                } else if modelName.hasPrefix("mlx-asr:") {
+                    p.engines[StepID.transcribe.rawValue] = "mlx-asr"
+                    p.transcribe.mlxModel = String(modelName.dropFirst("mlx-asr:".count))
+                } else {
+                    // whisper.cpp 已内嵌（进程内 Metal 推理）；mo.name 为模型名或路径，缺失时自动下载
+                    p.engines[StepID.transcribe.rawValue] = "whisper-native"
+                    p.transcribe.modelPath = modelName
+                }
             case .openai:
                 p.engines[StepID.transcribe.rawValue] = "openai-asr"
                 p.transcribe.compatBaseURL = baseURL(pr)

@@ -364,24 +364,58 @@ struct ArtifactPreviewSheet: View {
 struct LogSheet: View {
     let jobID: String
     @Environment(\.dismiss) private var dismiss
+    @State private var rows: [ConsoleLogRow] = []
+    @State private var previousText: String?
+    @State private var readError: String?
+
+    private var file: URL { JobStore().jobDir(id: jobID).appendingPathComponent("log.txt") }
 
     var body: some View {
-        let log = JobStore().jobDir(id: jobID).appendingPathComponent("log.txt")
         VStack(spacing: 0) {
             HStack {
-                Text("运行日志 · \(jobID)").font(.headline)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("运行日志").font(.title2.bold())
+                    Text(jobID).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text("每 2 秒刷新，跨续跑保留").font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
+                Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
                 Button("关闭") { dismiss() }.keyboardShortcut(.cancelAction)
+            }.padding(18)
+            if let readError {
+                Text(readError).font(.caption).foregroundStyle(.red).padding(.horizontal, 18).padding(.bottom, 8)
             }
-            .padding(10)
             Divider()
-            ScrollView {
-                Text((try? String(contentsOf: log, encoding: .utf8)) ?? "（暂无日志）")
-                    .font(.system(.caption, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .textSelection(.enabled)
+            LogConsole(rows: rows, filename: "ytb2zh-\(jobID)-log.txt")
+        }
+        .frame(minWidth: 820, idealWidth: 1020, minHeight: 480, idealHeight: 640)
+        .task {
+            while !Task.isCancelled {
+                await reload()
+                do { try await Task.sleep(for: .seconds(2)) } catch { break }
             }
         }
+    }
+
+    private func reload() async {
+        guard FileManager.default.fileExists(atPath: file.path) else { return }
+        do {
+            let source = file
+            let text = try await Task.detached(priority: .utility) {
+                try String(contentsOf: source, encoding: .utf8)
+            }.value
+            guard !Task.isCancelled else { return }
+            readError = nil
+            guard text != previousText else { return }
+            previousText = text
+            rows = text.components(separatedBy: .newlines).enumerated().compactMap { index, line in
+                guard !line.isEmpty else { return nil }
+                let level: AppLogLevel
+                if line.contains("❌") || line.contains("[ERROR]") || line.contains("失败") { level = .error }
+                else if line.contains("⚠") || line.contains("[WARN]") || line.contains("警告") { level = .warn }
+                else { level = .info }
+                return ConsoleLogRow(id: String(index), text: line, level: level)
+            }
+        } catch { readError = error.localizedDescription }
     }
 }

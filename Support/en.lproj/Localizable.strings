@@ -565,3 +565,37 @@
 "正在拉取…" = "Fetching…";
 "添加模型提供商" = "Add Model Provider";
 "选择国内外主流厂商预设（自动带出接口地址与推荐模型）或标准协议" = "Choose from popular global & Chinese provider presets or standard protocols";
+
+/* Local video import */
+"打开本地视频" = "Open Local Video";
+"选择英文视频，生成中文字幕与中文配音" = "Choose an English video to generate Chinese subtitles and dubbing";
+"打开本地视频、粘贴链接，或搜索你感兴趣的内容" = "Open a local video, paste a link, or search for something interesting";
+"本地视频路径、视频链接或 YouTube 关键词" = "Local video path, video link, or YouTube keywords";
+"视频链接或本地视频路径" = "Video link or local video path";
+"本地视频已选定，可先试转 3 分钟" = "Local video selected. Try converting the first 3 minutes";
+
+/* Log console */
+"应用日志" = "Application Logs";
+"保留最近 2000 条，关闭窗口后继续记录" = "Keeps the latest 2,000 entries; recording continues when closed";
+"搜索日志内容" = "Search logs";
+"清除搜索" = "Clear search";
+"级别" = "Level";
+"全部级别" = "All levels";
+"信息及以上" = "Info and above";
+"警告及以上" = "Warnings and errors";
+"仅错误" = "Errors only";
+"来源" = "Source";
+"全部来源" = "All sources";
+"暂无日志" = "No logs yet";
+"没有匹配的日志" = "No matching logs";
+"运行后，日志会自动显示在这里。" = "Logs appear here automatically during operation.";
+"试试其他关键词，或调整级别与来源筛选。" = "Try another search or adjust the level and source filters.";
+"复制此条" = "Copy entry";
+"跟随最新" = "Follow latest";
+"回看历史日志时可关闭，避免新日志打断阅读" = "Turn off while reviewing older entries to prevent automatic scrolling";
+"跳到最新" = "Jump to latest";
+"复制结果" = "Copy results";
+"导出当前结果" = "Export filtered results";
+"导出全部日志" = "Export all logs";
+"日志导出失败" = "Could not export logs";
+"每 2 秒刷新，跨续跑保留" = "Refreshes every 2 seconds; preserved across resumed runs";

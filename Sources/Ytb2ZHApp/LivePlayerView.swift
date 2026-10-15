@@ -55,10 +55,10 @@ struct LivePlayerView: View {
         ScrollView {
         VStack(spacing: 18) {
             VStack(alignment: .leading, spacing: 18) {
-                PageHeading(title: "看世界，听中文", subtitle: "粘贴视频链接，或搜索你感兴趣的内容")
+                PageHeading(title: "看世界，听中文", subtitle: "打开本地视频、粘贴链接，或搜索你感兴趣的内容")
                 HStack(spacing: 12) {
                     Image(systemName: "magnifyingglass").foregroundStyle(AppTheme.accent)
-                    TextField("视频链接、频道、播放列表或 YouTube 关键词", text: $url)
+                    TextField("本地视频路径、视频链接或 YouTube 关键词", text: $url)
                         .textFieldStyle(.plain).focused($entryFocused)
                         .onSubmit(openEntry)
                         .disabled(session.isRunning || session.converting || session.downloadingOriginal)
@@ -77,6 +77,12 @@ struct LivePlayerView: View {
                     Text(originalMode ? "先看原片，随时切换中文配音" : "边处理边播放，生成中文字幕与配音")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
+                    LocalVideoPicker { file in
+                        url = file.absoluteString
+                        openEntry()
+                    }
+                    .buttonStyle(CinemaButtonStyle())
+                    .disabled(session.isRunning || session.converting || session.downloadingOriginal || searching)
                     Button { entryFocused = true } label: { Text("⌘L").font(.caption) }
                         .buttonStyle(.plain).keyboardShortcut("l", modifiers: .command)
                         .help("定位到视频与搜索输入框")
@@ -201,6 +207,16 @@ struct LivePlayerView: View {
         let input = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { return }
         guard !session.converting, !session.downloadingOriginal, !searching else { return }
+        if let file = LocalMediaSource.url(for: input) {
+            searchError = ""
+            results = []
+            var localProfile = profile
+            localProfile.engines["download"] = "file"
+            url = file.absoluteString
+            if originalMode { session.startOriginal(url: url, profile: localProfile) }
+            else { session.start(url: url, profile: localProfile) }
+            return
+        }
         if VideoCatalogService.isLikelyListURL(input) { browseFromField(); return }
         if let parsed = URL(string: input), ["https", "http"].contains(parsed.scheme?.lowercased() ?? "") {
             if originalMode { session.startOriginal(url: input, profile: profile) }
