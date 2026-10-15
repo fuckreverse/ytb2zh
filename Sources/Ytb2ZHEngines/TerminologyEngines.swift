@@ -22,8 +22,13 @@ public struct GatewayTerminologyEngine: TerminologyEngine {
         {"domain":"一句话领域判断（如：人工智能/网络安全；生活哲理访谈则照实写，不要硬套科技）","tone":"语气基调（如：轻松教学/严肃专业/激动解说）","audience":"目标受众（如：入门者/从业者/普通观众）","terms":[{"en":"...","zh":"推荐中文译法","note":"一句话说明"}]}
         如果判断不了就填空字符串，不要编造。
         """
-        let reply = try await GatewayTranslateEngine.callLLM(
-            endpoint: options.endpoint, model: options.model, system: system, user: text)
+        let reply = try await OpenAICompatTranslateEngine.complete(
+            protocol: options.apiProtocol,
+            baseURL: options.endpoint,
+            apiKey: options.apiKey,
+            model: options.model,
+            system: system,
+            user: text)
         progress(0.8, "解析术语…")
         let obj = try Self.extractJSONObject(reply)
         let terms = Self.parseTerms(obj["terms"] as? [[String: Any]] ?? [])

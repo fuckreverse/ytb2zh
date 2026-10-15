@@ -707,3 +707,64 @@ final class DownloadReuseTests: XCTestCase {
         } catch { }
     }
 }
+
+// MARK: - 多协议端点归一化、推理 <think> 标签剥离与云端 ASR 响应解析
+
+final class MultiProtocolAndASRTests: XCTestCase {
+    func testEndpointResolution() {
+        XCTAssertEqual(
+            OpenAICompatTranslateEngine.resolveChatCompletionsURL("https://openrouter.ai/api/v1"),
+            "https://openrouter.ai/api/v1/chat/completions")
+        XCTAssertEqual(
+            OpenAICompatTranslateEngine.resolveChatCompletionsURL("https://ark.cn-beijing.volces.com/api/v3/"),
+            "https://ark.cn-beijing.volces.com/api/v3/chat/completions")
+        XCTAssertEqual(
+            GatewayTranslateEngine.resolveResponsesURL("http://127.0.0.1:15000/v1"),
+            "http://127.0.0.1:15000/v1/responses")
+        XCTAssertEqual(
+            GatewayTranslateEngine.resolveResponsesURL("http://127.0.0.1:15000/v1/responses"),
+            "http://127.0.0.1:15000/v1/responses")
+        XCTAssertEqual(
+            OpenAICompatTranslateEngine.resolveAnthropicMessagesURL("https://api.anthropic.com/v1"),
+            "https://api.anthropic.com/v1/messages")
+        XCTAssertEqual(
+            OpenAICompatTranslateEngine.resolveGeminiURL(
+                "https://generativelanguage.googleapis.com/v1beta",
+                model: "gemini-2.5-flash",
+                apiKey: "k123"),
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=k123")
+    }
+
+    func testStripThinkTagsAndLocalDetection() {
+        let raw = "<think>\n首先分析语序...\n</think>\n[{\"i\":0,\"zh\":\"你好世界\"}]"
+        XCTAssertEqual(OpenAICompatTranslateEngine.stripThinkTags(raw), "[{\"i\":0,\"zh\":\"你好世界\"}]")
+        XCTAssertTrue(OpenAICompatTranslateEngine.isLocalEndpoint("http://127.0.0.1:11434/v1"))
+        XCTAssertTrue(OpenAICompatTranslateEngine.isLocalEndpoint("http://localhost:1234/v1"))
+        XCTAssertFalse(OpenAICompatTranslateEngine.isLocalEndpoint("https://api.deepseek.com/v1"))
+    }
+
+    func testOpenAITranscribeResponseParsing() throws {
+        // 1) word-level
+        let wordJSON = """
+        {"words":[{"word":"Hello","start":0.0,"end":0.5},{"word":"world.","start":0.5,"end":1.2}]}
+        """.data(using: .utf8)!
+        let words1 = try OpenAITranscribeEngine.parseTranscriptionResponse(data: wordJSON, fallbackDuration: 5.0)
+        XCTAssertEqual(words1.count, 2)
+        XCTAssertEqual(words1[0].text, " Hello")
+
+        // 2) segment-level fallback
+        let segJSON = """
+        {"segments":[{"text":"Hello world.","start":1.0,"end":3.0}]}
+        """.data(using: .utf8)!
+        let words2 = try OpenAITranscribeEngine.parseTranscriptionResponse(data: segJSON, fallbackDuration: 5.0)
+        XCTAssertEqual(words2.count, 2)
+        XCTAssertEqual(words2.first?.start ?? 0, 1.0, accuracy: 0.01)
+
+        // 3) plain text fallback (e.g. SenseVoice)
+        let txtJSON = """
+        {"text":"Hello world."}
+        """.data(using: .utf8)!
+        let words3 = try OpenAITranscribeEngine.parseTranscriptionResponse(data: txtJSON, fallbackDuration: 4.0)
+        XCTAssertEqual(words3.count, 2)
+    }
+}

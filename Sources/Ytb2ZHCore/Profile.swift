@@ -38,18 +38,31 @@ public struct TranscribeOptions: Codable, Hashable, Sendable {
     public var language: String
     /// SRT 导入模式：外部字幕文件路径（engines.transcribe == "srt" 时生效）
     public var srtPath: String
+    /// OpenAI 兼容语音识别（engines.transcribe == "openai-asr" 时生效）
+    public var compatBaseURL: String
+    public var compatAPIKey: String
+    public var compatModel: String
 
     public init(modelPath: String = "\(NSHomeDirectory())/vid2zh/models/ggml-medium.en-q5_0.bin",
-                language: String = "en", srtPath: String = "") {
+                language: String = "en", srtPath: String = "",
+                compatBaseURL: String = "https://api.openai.com/v1",
+                compatAPIKey: String = "", compatModel: String = "whisper-1") {
         self.modelPath = modelPath; self.language = language; self.srtPath = srtPath
+        self.compatBaseURL = compatBaseURL; self.compatAPIKey = compatAPIKey; self.compatModel = compatModel
     }
 
-    private enum CodingKeys: String, CodingKey { case modelPath, language, srtPath }
+    private enum CodingKeys: String, CodingKey {
+        case modelPath, language, srtPath, compatBaseURL, compatAPIKey, compatModel
+    }
     public init(from decoder: Decoder) throws {
+        let d = TranscribeOptions()
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        modelPath = try c.decodeIfPresent(String.self, forKey: .modelPath) ?? TranscribeOptions().modelPath
+        modelPath = try c.decodeIfPresent(String.self, forKey: .modelPath) ?? d.modelPath
         language = try c.decodeIfPresent(String.self, forKey: .language) ?? "en"
         srtPath = try c.decodeIfPresent(String.self, forKey: .srtPath) ?? ""
+        compatBaseURL = try c.decodeIfPresent(String.self, forKey: .compatBaseURL) ?? d.compatBaseURL
+        compatAPIKey = try c.decodeIfPresent(String.self, forKey: .compatAPIKey) ?? d.compatAPIKey
+        compatModel = try c.decodeIfPresent(String.self, forKey: .compatModel) ?? d.compatModel
     }
 }
 
@@ -59,14 +72,19 @@ public struct SegmentationOptions: Codable, Hashable, Sendable {
     // LLM 断句（engines.segment == "llm-seg" 时生效）：在 punct 基础上重组
     public var endpoint: String
     public var model: String
+    public var apiKey: String
+    /// LLM 协议类型："responses"（默认）/ "openai" / "anthropic" / "gemini"
+    public var apiProtocol: String
     public init(softWindow: Double = 7.0, hardWindow: Double = 13.0,
                 endpoint: String = "http://127.0.0.1:15000/v1/responses",
-                model: String = "friday-personal/deepseek-v4-flash") {
+                model: String = "friday-personal/deepseek-v4-flash",
+                apiKey: String = "", apiProtocol: String = "responses") {
         self.softWindow = softWindow; self.hardWindow = hardWindow
         self.endpoint = endpoint; self.model = model
+        self.apiKey = apiKey; self.apiProtocol = apiProtocol
     }
 
-    private enum CodingKeys: String, CodingKey { case softWindow, hardWindow, endpoint, model }
+    private enum CodingKeys: String, CodingKey { case softWindow, hardWindow, endpoint, model, apiKey, apiProtocol }
     public init(from decoder: Decoder) throws {
         let d = SegmentationOptions()
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -74,6 +92,8 @@ public struct SegmentationOptions: Codable, Hashable, Sendable {
         hardWindow = try c.decodeIfPresent(Double.self, forKey: .hardWindow) ?? d.hardWindow
         endpoint = try c.decodeIfPresent(String.self, forKey: .endpoint) ?? d.endpoint
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? d.model
+        apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? d.apiKey
+        apiProtocol = try c.decodeIfPresent(String.self, forKey: .apiProtocol) ?? d.apiProtocol
     }
 }
 
@@ -87,12 +107,28 @@ public struct SeparationOptions: Codable, Hashable, Sendable {
 // MARK: 术语提取（可选步）
 
 public struct TerminologyOptions: Codable, Hashable, Sendable {
-    public var endpoint: String     // 走网关 Responses API（与翻译同源）
+    public var endpoint: String     // 走网关 Responses API 或其他标准 LLM 协议
     public var model: String
     public var maxTerms: Int        // 术语表上限（防 prompt 膨胀）
+    public var apiKey: String
+    /// LLM 协议类型："responses"（默认）/ "openai" / "anthropic" / "gemini"
+    public var apiProtocol: String
     public init(endpoint: String = "http://127.0.0.1:15000/v1/responses",
-                model: String = "friday-personal/deepseek-v4-flash", maxTerms: Int = 30) {
+                model: String = "friday-personal/deepseek-v4-flash", maxTerms: Int = 30,
+                apiKey: String = "", apiProtocol: String = "responses") {
         self.endpoint = endpoint; self.model = model; self.maxTerms = maxTerms
+        self.apiKey = apiKey; self.apiProtocol = apiProtocol
+    }
+
+    private enum CodingKeys: String, CodingKey { case endpoint, model, maxTerms, apiKey, apiProtocol }
+    public init(from decoder: Decoder) throws {
+        let d = TerminologyOptions()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        endpoint = try c.decodeIfPresent(String.self, forKey: .endpoint) ?? d.endpoint
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? d.model
+        maxTerms = try c.decodeIfPresent(Int.self, forKey: .maxTerms) ?? d.maxTerms
+        apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? d.apiKey
+        apiProtocol = try c.decodeIfPresent(String.self, forKey: .apiProtocol) ?? d.apiProtocol
     }
 }
 
@@ -125,10 +161,14 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
     public var quality: TranslationQuality
     /// 目标语言（ISO 639-1；zh 之外也可用于产出外挂字幕）
     public var targetLanguage: String
-    /// OpenAI 兼容翻译引擎参数（engines.translate == "compat" 时生效）
+    /// OpenAI / 标准协议兼容翻译引擎参数（engines.translate == "compat" 时生效）
     public var compatBaseURL: String
     public var compatAPIKey: String
     public var compatModel: String
+    /// 兼容协议类型："openai"（默认 chat/completions）/ "anthropic"（messages）/ "gemini"（generateContent）/ "responses"
+    public var compatProtocol: String
+    /// Responses API 网关可选密钥（engines.translate == "gateway" 时若非空则附带 Bearer 认证）
+    public var apiKey: String
     /// 运行时由 Pipeline 从 terminology.json 注入，不写入模板 JSON
     public var terminology: [TerminologyTerm]?
     /// 运行时由 Pipeline 从 terminology.json 注入的领域语境，不写入模板 JSON
@@ -142,12 +182,14 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
                 targetLanguage: String = "zh",
                 compatBaseURL: String = "https://api.openai.com/v1",
                 compatAPIKey: String = "", compatModel: String = "gpt-4o-mini",
+                compatProtocol: String = "openai", apiKey: String = "",
                 terminology: [TerminologyTerm]? = nil, domain: DomainContext? = nil) {
         self.endpoint = endpoint; self.model = model; self.batchSize = batchSize
         self.concurrency = concurrency; self.style = style; self.autoExpand = autoExpand
         self.useTerminology = useTerminology; self.quality = quality
         self.targetLanguage = targetLanguage
         self.compatBaseURL = compatBaseURL; self.compatAPIKey = compatAPIKey; self.compatModel = compatModel
+        self.compatProtocol = compatProtocol; self.apiKey = apiKey
         self.terminology = terminology
         self.domain = domain
     }
@@ -155,7 +197,7 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case endpoint, model, batchSize, concurrency, style, autoExpand
         case useTerminology, quality, targetLanguage
-        case compatBaseURL, compatAPIKey, compatModel
+        case compatBaseURL, compatAPIKey, compatModel, compatProtocol, apiKey
     }
 
     public init(from decoder: Decoder) throws {
@@ -173,6 +215,8 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
         compatBaseURL = try c.decodeIfPresent(String.self, forKey: .compatBaseURL) ?? d.compatBaseURL
         compatAPIKey = try c.decodeIfPresent(String.self, forKey: .compatAPIKey) ?? d.compatAPIKey
         compatModel = try c.decodeIfPresent(String.self, forKey: .compatModel) ?? d.compatModel
+        compatProtocol = try c.decodeIfPresent(String.self, forKey: .compatProtocol) ?? d.compatProtocol
+        apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? d.apiKey
         terminology = nil
         domain = nil
     }
@@ -192,6 +236,8 @@ public struct TranslateOptions: Codable, Hashable, Sendable {
         try c.encode(compatBaseURL, forKey: .compatBaseURL)
         try c.encode(compatAPIKey, forKey: .compatAPIKey)
         try c.encode(compatModel, forKey: .compatModel)
+        try c.encode(compatProtocol, forKey: .compatProtocol)
+        try c.encode(apiKey, forKey: .apiKey)
     }
 }
 

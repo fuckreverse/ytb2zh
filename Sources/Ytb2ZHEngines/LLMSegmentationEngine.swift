@@ -36,8 +36,7 @@ public struct LLMSegmentationEngine: SegmentationEngine {
         规则：每组是连续索引；不拆散单个片段；输出覆盖 0..\(units.count - 1) 每个索引恰好一次。
         返回 JSON 数组的数组，如 [[0,1],[2],[3,4]]，不要其他内容。
         """
-        guard let reply = try? blockingLLM(endpoint: options.endpoint, model: options.model,
-                                           system: system, user: numbered),
+        guard let reply = try? blockingLLM(options: options, system: system, user: numbered),
               let groups = Self.parseGroups(reply) else {
             return units   // 回退粗切
         }
@@ -58,14 +57,19 @@ public struct LLMSegmentationEngine: SegmentationEngine {
         return result.sorted { $0.start < $1.start }
     }
 
-    /// Responses API 同步调用（segment 是同步协议方法，用信号量桥接）
-    private func blockingLLM(endpoint: String, model: String, system: String, user: String) throws -> String {
+    /// 多协议同步调用（segment 是同步协议方法，用信号量桥接；兼容 Responses / OpenAI / Anthropic / Gemini）
+    private func blockingLLM(options: SegmentationOptions, system: String, user: String) throws -> String {
         let box = Mutex<Result<String, Error>?>(nil)
         let sem = DispatchSemaphore(value: 0)
         Task.detached {
             do {
-                let r = try await GatewayTranslateEngine.callLLM(endpoint: endpoint, model: model,
-                                                                 system: system, user: user)
+                let r = try await OpenAICompatTranslateEngine.complete(
+                    protocol: options.apiProtocol,
+                    baseURL: options.endpoint,
+                    apiKey: options.apiKey,
+                    model: options.model,
+                    system: system,
+                    user: user)
                 box.with { $0 = .success(r) }
             } catch {
                 box.with { $0 = .failure(error) }

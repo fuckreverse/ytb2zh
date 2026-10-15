@@ -76,58 +76,68 @@ enum AppSettings {
             guard let ref = stageModels[step.rawValue] else { return nil }
             let parts = ref.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
             guard parts.count == 2,
-                  let pr = providers.first(where: { $0.id == parts[0] }),
+                  let pr = providers.first(where: { $0.id == parts[0] && $0.enabled }),
                   let mo = pr.models.first(where: { $0.id == parts[1] }),
                   !mo.name.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
             return (pr, mo)
         }
         func baseURL(_ pr: ProviderConfig) -> String {
-            pr.baseURL.trimmingCharacters(in: .whitespaces).isEmpty ? pr.kind.defaultBaseURL : pr.baseURL
+            let trimmed = pr.baseURL.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { return trimmed }
+            return pr.preset?.defaultBaseURL.isEmpty == false ? pr.preset!.defaultBaseURL : pr.kind.defaultBaseURL
         }
 
         if let (pr, mo) = resolve(.translate) {
+            let modelName = mo.name.trimmingCharacters(in: .whitespaces)
             switch pr.kind {
             case .gateway:
                 p.engines[StepID.translate.rawValue] = "gateway"
                 p.translate.endpoint = baseURL(pr)
-                p.translate.model = mo.name
-            case .openai:
+                p.translate.apiKey = pr.apiKey
+                p.translate.model = modelName
+            case .openai, .anthropic, .gemini:
                 p.engines[StepID.translate.rawValue] = "compat"
                 p.translate.compatBaseURL = baseURL(pr)
                 p.translate.compatAPIKey = pr.apiKey
-                p.translate.compatModel = mo.name
+                p.translate.compatModel = modelName
+                p.translate.compatProtocol = pr.kind.llmProtocolRaw
             default: break
             }
         }
 
-        if let (pr, mo) = resolve(.segment), pr.kind == .gateway {
+        if let (pr, mo) = resolve(.segment), pr.kind.isLLMProtocol {
             p.engines[StepID.segment.rawValue] = "llm-seg"
             p.segmentation.endpoint = baseURL(pr)
-            p.segmentation.model = mo.name
+            p.segmentation.apiKey = pr.apiKey
+            p.segmentation.model = mo.name.trimmingCharacters(in: .whitespaces)
+            p.segmentation.apiProtocol = pr.kind.llmProtocolRaw
         }
 
-        if let (pr, mo) = resolve(.summarize), pr.kind == .gateway {
+        if let (pr, mo) = resolve(.summarize), pr.kind.isLLMProtocol {
             p.engines[StepID.summarize.rawValue] = "gateway-terms"
             p.terminology.endpoint = baseURL(pr)
-            p.terminology.model = mo.name
+            p.terminology.apiKey = pr.apiKey
+            p.terminology.model = mo.name.trimmingCharacters(in: .whitespaces)
+            p.terminology.apiProtocol = pr.kind.llmProtocolRaw
         }
 
         if let (pr, mo) = resolve(.synthesize) {
+            let modelName = mo.name.trimmingCharacters(in: .whitespaces)
             switch pr.kind {
             case .bailian:
                 p.engines[StepID.synthesize.rawValue] = "bailian"
                 p.synth.apiKey = pr.apiKey
-                p.synth.model = mo.name
+                p.synth.model = modelName
             case .openai:
                 p.engines[StepID.synthesize.rawValue] = "openai-tts"
                 p.synth.compatBaseURL = baseURL(pr)
                 p.synth.compatAPIKey = pr.apiKey
-                p.synth.compatTTSModel = mo.name
+                p.synth.compatTTSModel = modelName
             case .edge:
                 p.engines[StepID.synthesize.rawValue] = "edge-tts"
-                p.synth.edgeVoice = mo.name
+                p.synth.edgeVoice = modelName
             case .localTTS:
-                let parts = mo.name.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+                let parts = modelName.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
                 let subEngine = parts.first?.trimmingCharacters(in: .whitespaces) ?? "say"
                 let param = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespaces) : ""
                 if subEngine == "sherpa-onnx" {
@@ -142,10 +152,20 @@ enum AppSettings {
             }
         }
 
-        if let (pr, mo) = resolve(.transcribe), pr.kind == .whisperLocal {
-            // whisper.cpp 已内嵌（进程内 Metal 推理）；mo.name 为模型名或路径，缺失时自动下载
-            p.engines[StepID.transcribe.rawValue] = "whisper-native"
-            p.transcribe.modelPath = mo.name
+        if let (pr, mo) = resolve(.transcribe) {
+            let modelName = mo.name.trimmingCharacters(in: .whitespaces)
+            switch pr.kind {
+            case .whisperLocal:
+                // whisper.cpp 已内嵌（进程内 Metal 推理）；mo.name 为模型名或路径，缺失时自动下载
+                p.engines[StepID.transcribe.rawValue] = "whisper-native"
+                p.transcribe.modelPath = modelName
+            case .openai:
+                p.engines[StepID.transcribe.rawValue] = "openai-asr"
+                p.transcribe.compatBaseURL = baseURL(pr)
+                p.transcribe.compatAPIKey = pr.apiKey
+                p.transcribe.compatModel = modelName
+            default: break
+            }
         }
 
         return p

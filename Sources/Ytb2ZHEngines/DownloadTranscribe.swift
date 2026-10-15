@@ -172,3 +172,128 @@ func fileSize(_ path: String) -> Int64? {
           let n = attrs[.size] as? NSNumber else { return nil }
     return n.int64Value
 }
+
+// MARK: - OpenAI 兼容语音识别引擎（POST /v1/audio/transcriptions，适配 OpenAI / Groq / 硅基流动 SenseVoice 等）
+
+public final class OpenAITranscribeEngine: TranscribeEngine, @unchecked Sendable {
+    public let descriptor = EngineDescriptor(
+        "openai-asr", "OpenAI 兼容语音识别", "/v1/audio/transcriptions 接口（OpenAI Whisper / Groq / SenseVoice 等）")
+
+    private let runner = ProcessRunner()
+
+    public init() {}
+
+    public func transcribe(video: URL, workDir: URL, options: TranscribeOptions,
+                           progress: @Sendable @escaping (Double, String?) -> Void) async throws -> [TimedWord] {
+        let key = options.compatAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if key.isEmpty && !OpenAICompatTranslateEngine.isLocalEndpoint(options.compatBaseURL) {
+            throw EngineError.engineFailure("语音识别 API Key 未配置")
+        }
+        let fm = FileManager.default
+        try fm.createDirectory(at: workDir, withIntermediateDirectories: true)
+        let mp3 = workDir.appendingPathComponent("audio16k.mp3")
+
+        progress(0.05, "抽取压缩音轨")
+        let extract = try runner.run(SidecarPaths.ffmpeg,
+            ["-y", "-i", video.path, "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", mp3.path])
+        guard extract.code == 0, let audioData = try? Data(contentsOf: mp3), !audioData.isEmpty else {
+            throw EngineError.engineFailure("ffmpeg 抽音轨失败：\(String(extract.stderr.suffix(400)))")
+        }
+
+        let trimmed = options.compatBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"/$"#, with: "", options: .regularExpression)
+        let urlString = trimmed.hasSuffix("/audio/transcriptions")
+            ? trimmed : "\(trimmed)/audio/transcriptions"
+        guard let url = URL(string: urlString) else {
+            throw EngineError.notConfigured("语音识别地址无效：\(urlString)")
+        }
+
+        progress(0.2, "上传音轨识别中…")
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        if !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        req.timeoutInterval = 600
+
+        let modelName = options.compatModel.isEmpty ? "whisper-1" : options.compatModel
+        var body = Data()
+        func appendField(_ name: String, _ value: String) {
+            body.append("--\(boundary)\r\n".data(using: .utf8)!)
+            body.append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n".data(using: .utf8)!)
+            body.append("\(value)\r\n".data(using: .utf8)!)
+        }
+        appendField("model", modelName)
+        if !options.language.isEmpty {
+            appendField("language", options.language)
+        }
+        appendField("response_format", "verbose_json")
+        appendField("timestamp_granularities[]", "word")
+        appendField("timestamp_granularities[]", "segment")
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"audio.mp3\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: audio/mpeg\r\n\r\n".data(using: .utf8)!)
+        body.append(audioData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+        req.httpBody = body
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            let errText = String(data: data.prefix(400), encoding: .utf8) ?? ""
+            throw EngineError.engineFailure("云端语音识别 HTTP \(status)：\(errText)")
+        }
+        let totalDur = ffprobeDuration(mp3) ?? 60.0
+        let words = try Self.parseTranscriptionResponse(data: data, fallbackDuration: totalDur)
+        progress(1.0, "\(words.count) 词")
+        return words
+    }
+
+    static func parseTranscriptionResponse(data: Data, fallbackDuration: Double) throws -> [TimedWord] {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw EngineError.engineFailure("云端语音识别返回非 JSON")
+        }
+        // 1) 优先词级时间戳 words[]
+        if let rawWords = obj["words"] as? [[String: Any]], !rawWords.isEmpty {
+            let parsed = rawWords.compactMap { w -> TimedWord? in
+                guard let text = (w["word"] as? String ?? w["text"] as? String)?.trimmingCharacters(in: .whitespaces),
+                      !text.isEmpty,
+                      let start = (w["start"] as? NSNumber)?.doubleValue,
+                      let end = (w["end"] as? NSNumber)?.doubleValue else { return nil }
+                return TimedWord(start: start, end: max(start + 0.05, end), text: " " + text)
+            }
+            if !parsed.isEmpty { return parsed }
+        }
+        // 2) 次选句级时间戳 segments[] → 按词均匀铺时间
+        if let segs = obj["segments"] as? [[String: Any]], !segs.isEmpty {
+            var words: [TimedWord] = []
+            for seg in segs {
+                guard let text = (seg["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !text.isEmpty,
+                      let start = (seg["start"] as? NSNumber)?.doubleValue,
+                      let end = (seg["end"] as? NSNumber)?.doubleValue else { continue }
+                let toks = SrtTranscribeEngine.tokenize(text)
+                guard !toks.isEmpty else { continue }
+                let step = max(0.05, (end - start) / Double(toks.count))
+                for (i, t) in toks.enumerated() {
+                    let ws = start + Double(i) * step
+                    words.append(TimedWord(start: ws, end: min(end, ws + step), text: " " + t.text))
+                }
+            }
+            if !words.isEmpty { return words }
+        }
+        // 3) 兜底：仅有全文 text（如部分 SenseVoice 端点）
+        if let text = (obj["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+            let toks = SrtTranscribeEngine.tokenize(text)
+            guard !toks.isEmpty else { return [] }
+            let step = max(0.05, fallbackDuration / Double(toks.count))
+            return toks.enumerated().map { i, t in
+                let ws = Double(i) * step
+                return TimedWord(start: ws, end: ws + step, text: " " + t.text)
+            }
+        }
+        throw EngineError.engineFailure("云端语音识别结果为空")
+    }
+}

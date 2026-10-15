@@ -243,7 +243,7 @@ private struct NetworkTab: View {
     }
 }
 
-// MARK: - 分页 2：模型提供商
+// MARK: - 分页 2：模型提供商（Cherry Studio / Magpie 风格：左侧服务商列表 + 右侧配置面板 + 预设库弹窗）
 // 注意：这里刻意不用 ForEach($store.providers) / ForEach($pr.models) 集合元素
 // Binding 语法糖——行内删除会使底层数组缩短，同一布局事务里 TextField 内部的
 // ValueAction 仍会读取已删除元素的旧 Binding（getter 对数组做下标访问），
@@ -254,92 +254,636 @@ private struct NetworkTab: View {
 
 private struct ProvidersTab: View {
     @ObservedObject var store: ProviderStore
+    @State private var selectedID: String?
+    @State private var sidebarFilter = ""
+    @State private var showPresetSheet = false
+
+    private var filteredProviders: [ProviderConfig] {
+        let q = sidebarFilter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return store.providers }
+        return store.providers.filter { pr in
+            pr.name.lowercased().contains(q)
+                || pr.kind.label.lowercased().contains(q)
+                || pr.baseURL.lowercased().contains(q)
+                || pr.models.contains { $0.name.lowercased().contains(q) }
+        }
+    }
 
     var body: some View {
-        Form {
-            ForEach(store.providers) { pr in
-                ProviderSection(store: store, providerID: pr.id)
+        HStack(spacing: 0) {
+            // —— 左栏：已配置提供商列表 + 添加入口
+            VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                    TextField("搜索已添加的服务商…", text: $sidebarFilter)
+                        .textFieldStyle(.plain)
+                        .font(.callout)
+                    if !sidebarFilter.isEmpty {
+                        Button {
+                            sidebarFilter = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(AppTheme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                )
+                .padding(10)
+
+                Divider()
+
+                if filteredProviders.isEmpty {
+                    VStack(spacing: 8) {
+                        Spacer()
+                        Image(systemName: "server.rack")
+                            .font(.title2)
+                            .foregroundStyle(.tertiary)
+                        Text(store.providers.isEmpty ? "尚未添加提供商" : "无匹配提供商")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 4) {
+                            ForEach(filteredProviders) { pr in
+                                providerSidebarRow(pr)
+                            }
+                        }
+                        .padding(8)
+                    }
+                }
+
+                Divider()
+
+                // 底部操作栏：打开预设库 + 快速按分类添加
+                HStack(spacing: 8) {
+                    Button {
+                        showPresetSheet = true
+                    } label: {
+                        Label("添加提供商", systemImage: "plus.circle.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+
+                    Menu {
+                        ForEach(ProviderCategory.allCases) { cat in
+                            Menu(L(cat.rawValue)) {
+                                ForEach(ProviderPreset.all.filter { $0.category == cat }) { preset in
+                                    Button(preset.name) {
+                                        selectedID = store.addPreset(preset)
+                                    }
+                                }
+                            }
+                        }
+                        Divider()
+                        Menu("仅按底层协议新建空白项") {
+                            ForEach(ProviderKind.allCases) { k in
+                                Button(L(k.label)) {
+                                    selectedID = store.add(k)
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "list.bullet.indent")
+                            .symbolRenderingMode(.hierarchical)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .frame(width: 28)
+                    .help("快速从分类菜单添加")
+                }
+                .padding(10)
+            }
+            .frame(width: 255)
+            .background(AppTheme.surface.opacity(0.6))
+
+            Divider()
+
+            // —— 右栏：当前选中提供商详情或欢迎引导页
+            if let currentID = effectiveSelectedID,
+               store.providers.contains(where: { $0.id == currentID }) {
+                ProviderDetailPane(
+                    store: store,
+                    providerID: currentID,
+                    onOpenPresetLibrary: { showPresetSheet = true },
+                    onDeleted: {
+                        selectedID = store.providers.first?.id
+                    }
+                )
+            } else {
+                emptyWelcomePane
+            }
+        }
+        .onAppear {
+            if selectedID == nil { selectedID = store.providers.first?.id }
+        }
+        .onChange(of: store.providers) { _, _ in
+            store.save()
+            if let sel = selectedID, !store.providers.contains(where: { $0.id == sel }) {
+                selectedID = store.providers.first?.id
+            } else if selectedID == nil {
+                selectedID = store.providers.first?.id
+            }
+        }
+        .sheet(isPresented: $showPresetSheet) {
+            ProviderPresetPickerSheet { chosenPreset in
+                selectedID = store.addPreset(chosenPreset)
+            }
+        }
+    }
+
+    private var effectiveSelectedID: String? {
+        if let sel = selectedID, store.providers.contains(where: { $0.id == sel }) {
+            return sel
+        }
+        return store.providers.first?.id
+    }
+
+    private func providerSidebarRow(_ pr: ProviderConfig) -> some View {
+        let isSelected = effectiveSelectedID == pr.id
+        return HStack(spacing: 10) {
+            Text(pr.badgeText)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(pr.enabled ? pr.badgeColor : Color.gray.opacity(0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pr.displayName)
+                    .font(.callout.weight(isSelected ? .semibold : .regular))
+                    .foregroundStyle(pr.enabled ? .primary : .secondary)
+                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(pr.kind.shortBadge)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Text("·")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                    Text("\(pr.models.filter { !$0.name.isEmpty }.count) 模型")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
             }
 
-            Section {
-                Menu {
-                    ForEach(ProviderKind.allCases) { k in
-                        Button(L(k.label)) { store.add(k) }
+            Spacer(minLength: 4)
+
+            Circle()
+                .fill(pr.enabled ? Color.green : Color.gray.opacity(0.35))
+                .frame(width: 7, height: 7)
+                .help(pr.enabled ? "已启用" : "已停用")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isSelected ? Color.accentColor.opacity(0.14) : Color.clear)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selectedID = pr.id
+        }
+        .contextMenu {
+            Button(pr.enabled ? "停用此提供商" : "启用此提供商") {
+                if let i = store.providers.firstIndex(where: { $0.id == pr.id }) {
+                    store.providers[i].enabled.toggle()
+                }
+            }
+            Divider()
+            Button("删除此提供商", role: .destructive) {
+                store.removeProvider(id: pr.id)
+            }
+        }
+    }
+
+    private var emptyWelcomePane: some View {
+        let featuredIDs = [
+            "openrouter", "opencode", "alibaba-bailian", "bytedance-ark",
+            "deepseek", "siliconflow", "zhipu", "moonshot",
+            "alibaba-bailian-tts", "anthropic", "gemini", "custom-responses",
+        ]
+        let featured = featuredIDs.compactMap { ProviderPreset.find($0) }
+
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("快速接入主流大模型与语音服务")
+                        .font(.title3.weight(.semibold))
+                    Text("点击下方常用服务商即可一键带出接口地址、标准协议与推荐模型；只需填入 API Key 即可在「模型分配」中使用。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 12)], spacing: 12) {
+                    ForEach(featured) { preset in
+                        Button {
+                            selectedID = store.addPreset(preset)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Text(preset.badgeText)
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.white)
+                                    .frame(width: 34, height: 34)
+                                    .background(preset.badgeColor)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(preset.name)
+                                        .font(.callout.weight(.medium))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                    Text(preset.kind.shortBadge)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "plus.circle")
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                            .padding(10)
+                            .background(AppTheme.surface)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
                     }
-                } label: {
-                    Label("添加提供商", systemImage: "plus")
+                }
+
+                HStack {
+                    Button {
+                        showPresetSheet = true
+                    } label: {
+                        Label("浏览全部 \(ProviderPreset.all.count) 个内置服务商与标准协议…", systemImage: "square.grid.2x2")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding(28)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+// MARK: - 右侧提供商详情面板
+
+private struct ProviderDetailPane: View {
+    @ObservedObject var store: ProviderStore
+    let providerID: String
+    let onOpenPresetLibrary: () -> Void
+    let onDeleted: () -> Void
+
+    @State private var showAPIKey = false
+    @State private var testingConnection = false
+    @State private var connectionResult: (ok: Bool, message: String)?
+    @State private var fetchingModels = false
+    @State private var fetchedModels: [String] = []
+    @State private var fetchError: String?
+    @State private var showRemoteModelsSheet = false
+
+    var body: some View {
+        let pr = providerBinding
+        let val = pr.wrappedValue
+        let endpointPreview = val.kind.endpointPreview(
+            baseURL: val.baseURL,
+            sampleModel: val.models.first(where: { !$0.name.isEmpty })?.name ?? "model"
+        )
+
+        Form {
+            // —— 顶部服务商名片与开关
+            Section {
+                HStack(spacing: 12) {
+                    Text(val.badgeText)
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .background(val.enabled ? val.badgeColor : Color.gray.opacity(0.5))
+                        .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 8) {
+                            Text(val.displayName)
+                                .font(.headline)
+                            Text(val.kind.shortBadge)
+                                .font(.caption2.weight(.medium))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.accentColor.opacity(0.12))
+                                .foregroundStyle(Color.accentColor)
+                                .clipShape(Capsule())
+                        }
+                        if let subtitle = val.preset?.subtitle, !subtitle.isEmpty {
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    if let keyURL = val.preset?.apiKeyURL, !keyURL.isEmpty, let url = URL(string: keyURL) {
+                        Link(destination: url) {
+                            Label("获取 API Key", systemImage: "key.fill")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+
+                    Toggle("启用", isOn: pr.enabled)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                .padding(.vertical, 2)
+            }
+
+            // —— 接口与标准协议设置
+            Section("连接与标准协议") {
+                LabeledContent("显示名称") {
+                    TextField("如 OpenRouter / 字节火山方舟 / 阿里云百炼", text: pr.name)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 420)
+                }
+
+                LabeledContent("标准协议 / 引擎") {
+                    Picker("", selection: pr.kind) {
+                        ForEach(ProviderKind.allCases) { k in
+                            Text(L(k.label)).tag(k)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 320, alignment: .leading)
+                }
+
+                if val.kind.needsBaseURL {
+                    LabeledContent(L(val.kind.baseURLLabel)) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                TextField(val.preset?.defaultBaseURL ?? val.kind.defaultBaseURL, text: pr.baseURL)
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(maxWidth: 380)
+                                if let def = val.preset?.defaultBaseURL ?? (val.kind.defaultBaseURL.isEmpty ? nil : val.kind.defaultBaseURL),
+                                   !def.isEmpty, val.baseURL != def {
+                                    Button("恢复默认") {
+                                        pr.baseURL.wrappedValue = def
+                                    }
+                                    .controlSize(.small)
+                                }
+                            }
+                            if !endpointPreview.isEmpty {
+                                Text("完整端点预览：\(endpointPreview)")
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+
+                if val.kind.needsAPIKey {
+                    LabeledContent("API Key") {
+                        HStack(spacing: 6) {
+                            Group {
+                                if showAPIKey {
+                                    TextField("粘贴 API Key（如 sk-...）", text: pr.apiKey)
+                                } else {
+                                    SecureField("粘贴 API Key（如 sk-...）", text: pr.apiKey)
+                                }
+                            }
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 340)
+
+                            Button {
+                                showAPIKey.toggle()
+                            } label: {
+                                Image(systemName: showAPIKey ? "eye.slash" : "eye")
+                            }
+                            .buttonStyle(.borderless)
+                            .help(showAPIKey ? "隐藏密钥" : "显示密钥")
+
+                            if val.kind.supportsConnectionTest {
+                                Button {
+                                    runConnectionTest(val)
+                                } label: {
+                                    if testingConnection {
+                                        ProgressView().controlSize(.small)
+                                    } else {
+                                        Text("检测连通性")
+                                    }
+                                }
+                                .controlSize(.small)
+                                .disabled(testingConnection)
+                            }
+                        }
+                    }
+                }
+
+                if let res = connectionResult {
+                    HStack(spacing: 6) {
+                        Image(systemName: res.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(res.ok ? .green : .orange)
+                        Text(res.message)
+                            .font(.caption)
+                            .foregroundStyle(res.ok ? .green : .orange)
+                            .textSelection(.enabled)
+                        Spacer()
+                    }
+                }
+
+                Text(L(val.kind.hint))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            // —— 模型列表与能力勾选
+            Section {
+                if val.models.isEmpty {
+                    Text("尚未配置模型，请点击下方「添加模型」或「从接口拉取模型」。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(val.models) { mo in
+                        modelRow(mo.id)
+                    }
+                }
+
+                HStack(spacing: 12) {
+                    Button {
+                        store.addModel(providerID: providerID)
+                    } label: {
+                        Label("手动添加模型", systemImage: "plus.circle")
+                    }
+
+                    if let preset = val.preset, !preset.recommendedModels.isEmpty {
+                        Button {
+                            store.addRecommendedModels(providerID: providerID)
+                        } label: {
+                            Label("填入推荐模型", systemImage: "sparkles")
+                        }
+                    }
+
+                    if val.kind.supportsRemoteModels {
+                        Button {
+                            fetchRemoteModels(val)
+                        } label: {
+                            if fetchingModels {
+                                HStack(spacing: 4) {
+                                    ProgressView().controlSize(.small)
+                                    Text("正在拉取…")
+                                }
+                            } else {
+                                Label("从接口拉取模型 (/models)", systemImage: "arrow.down.circle")
+                            }
+                        }
+                        .disabled(fetchingModels)
+                    }
+
+                    Spacer()
+                }
+                .padding(.top, 4)
+
+                if let err = fetchError {
+                    Text("拉取模型列表失败：\(err)")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .textSelection(.enabled)
+                }
+            } header: {
+                HStack {
+                    Text("模型与能力声明（\(val.models.count)）")
+                    Spacer()
+                    Text("勾选模型具备的能力，即可在「模型分配」页对应阶段中选用")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            // —— 底部删除操作
+            Section {
+                HStack {
+                    Button {
+                        onOpenPresetLibrary()
+                    } label: {
+                        Label("继续从预设库添加其他提供商…", systemImage: "plus.square.on.square")
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+
+                    Spacer()
+
+                    Button("删除此提供商", role: .destructive) {
+                        store.removeProvider(id: providerID)
+                        onDeleted()
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
                 }
             }
         }
         .formStyle(.grouped)
-        .onChange(of: store.providers) { _ in store.save() }
+        .onChange(of: providerID) { _, _ in
+            connectionResult = nil
+            fetchError = nil
+        }
+        .sheet(isPresented: $showRemoteModelsSheet) {
+            RemoteModelPickerSheet(
+                providerName: val.displayName,
+                remoteModels: fetchedModels,
+                existingNames: Set(val.models.map { $0.name.trimmingCharacters(in: .whitespaces) })
+            ) { selectedNames in
+                // 若当前只有一个空行，先清掉空行
+                if let i = store.providers.firstIndex(where: { $0.id == providerID }),
+                   store.providers[i].models.count == 1,
+                   store.providers[i].models[0].name.trimmingCharacters(in: .whitespaces).isEmpty {
+                    store.providers[i].models.removeAll()
+                }
+                for name in selectedNames {
+                    store.addModel(providerID: providerID, name: name)
+                }
+            }
+        }
     }
-}
 
-private struct ProviderSection: View {
-    @ObservedObject var store: ProviderStore
-    let providerID: String
+    // MARK: 连通性检测与远端模型拉取
 
-    var body: some View {
-        let pr = providerBinding
-        Section {
-            LabeledContent("类型") {
-                Picker("", selection: pr.kind) {
-                    ForEach(ProviderKind.allCases) { k in
-                        Text(L(k.label)).tag(k)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 200)
-            }
-            LabeledContent("名称") {
-                TextField("如 本地网关 / OpenAI / 硅基流动", text: pr.name)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 340)
-            }
-            if pr.wrappedValue.kind.needsBaseURL {
-                LabeledContent(L(pr.wrappedValue.kind.baseURLLabel)) {
-                    TextField(pr.wrappedValue.kind.defaultBaseURL, text: pr.baseURL)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 340)
-                }
-            }
-            if pr.wrappedValue.kind.needsAPIKey {
-                LabeledContent("API Key") {
-                    SecureField("sk-…", text: pr.apiKey)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 340)
-                }
-            }
+    private func runConnectionTest(_ pr: ProviderConfig) {
+        testingConnection = true
+        connectionResult = nil
+        let url = pr.baseURL.trimmingCharacters(in: .whitespaces).isEmpty
+            ? (pr.preset?.defaultBaseURL ?? pr.kind.defaultBaseURL)
+            : pr.baseURL
+        let model = pr.models.first(where: { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty })?.name ?? ""
+        let proto = pr.kind.llmProtocolRaw
+        let key = pr.apiKey
 
-            LabeledContent("模型（\(pr.wrappedValue.models.count)）") {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(pr.wrappedValue.models) { mo in
-                        modelRow(mo.id)
-                    }
-                    Button {
-                        store.addModel(providerID: providerID)
-                    } label: {
-                        Label("添加模型", systemImage: "plus.circle")
-                    }
-                    .buttonStyle(.link)
+        Task {
+            let start = Date()
+            do {
+                if !model.isEmpty {
+                    let reply = try await OpenAICompatTranslateEngine.complete(
+                        protocol: proto,
+                        baseURL: url,
+                        apiKey: key,
+                        model: model,
+                        system: "Reply with OK only.",
+                        user: "ping",
+                        retries: 1
+                    )
+                    let ms = Int(Date().timeIntervalSince(start) * 1000)
+                    let preview = String(reply.prefix(40)).replacingOccurrences(of: "\n", with: " ")
+                    connectionResult = (true, "连通正常（\(ms) ms，模型 \(model) 回复：\(preview)）")
+                } else {
+                    let models = try await OpenAICompatTranslateEngine.fetchModels(
+                        protocol: proto, baseURL: url, apiKey: key
+                    )
+                    let ms = Int(Date().timeIntervalSince(start) * 1000)
+                    connectionResult = (true, "端点连通正常（\(ms) ms，发现 \(models.count) 个可用模型）")
                 }
+            } catch {
+                connectionResult = (false, "检测失败：\(error.localizedDescription)")
             }
-            .padding(.vertical, 4)
+            testingConnection = false
+        }
+    }
 
-            Text(L(pr.wrappedValue.kind.hint))
-                .font(.caption2).foregroundStyle(.secondary)
+    private func fetchRemoteModels(_ pr: ProviderConfig) {
+        fetchingModels = true
+        fetchError = nil
+        let url = pr.baseURL.trimmingCharacters(in: .whitespaces).isEmpty
+            ? (pr.preset?.defaultBaseURL ?? pr.kind.defaultBaseURL)
+            : pr.baseURL
+        let proto = pr.kind.llmProtocolRaw
+        let key = pr.apiKey
 
-            HStack {
-                Spacer()
-                Button("删除此提供商", role: .destructive) {
-                    store.removeProvider(id: providerID)
+        Task {
+            do {
+                let list = try await OpenAICompatTranslateEngine.fetchModels(
+                    protocol: proto, baseURL: url, apiKey: key
+                )
+                if list.isEmpty {
+                    fetchError = "接口返回模型列表为空，请手动输入模型 ID"
+                } else {
+                    fetchedModels = list
+                    showRemoteModelsSheet = true
                 }
-                .buttonStyle(.link)
-                .font(.caption)
+            } catch {
+                fetchError = error.localizedDescription
             }
-        } header: {
-            Text(pr.wrappedValue.name.isEmpty ? L10n.tr("未命名提供商") : pr.wrappedValue.name)
+            fetchingModels = false
         }
     }
 
@@ -369,22 +913,25 @@ private struct ProviderSection: View {
 
     private func modelRow(_ modelID: String) -> some View {
         HStack(spacing: 10) {
-            TextField("模型 ID / 名称", text: modelBinding(modelID).name)
+            TextField("模型 ID / 名称（如 deepseek-chat / qwen-plus）", text: modelBinding(modelID).name)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 200)
+                .frame(minWidth: 210, maxWidth: 260)
             ForEach(ModelCapability.allCases) { cap in
                 Toggle(L(cap.label), isOn: capBinding(modelBinding(modelID), cap))
                     .toggleStyle(.checkbox)
                     .font(.caption)
             }
+            Spacer(minLength: 4)
             Button {
                 store.removeModel(providerID: providerID, modelID: modelID)
             } label: {
                 Image(systemName: "minus.circle")
+                    .foregroundStyle(.secondary)
             }
             .buttonStyle(.borderless)
             .help("删除该模型")
         }
+        .padding(.vertical, 2)
     }
 
     private func capBinding(_ mo: Binding<ProviderModel>, _ cap: ModelCapability) -> Binding<Bool> {
@@ -400,7 +947,226 @@ private struct ProviderSection: View {
     }
 }
 
-// MARK: - 分页 3：模型分配（按能力筛选）
+// MARK: - 弹窗 1：主流提供商与标准协议预设库（参考 Cherry Studio / Magpie）
+
+private struct ProviderPresetPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+    @State private var selectedCategory: String = "all"
+    let onSelect: (ProviderPreset) -> Void
+
+    private var filteredPresets: [ProviderPreset] {
+        ProviderPreset.all.filter { p in
+            let catMatch = (selectedCategory == "all") || (p.category.rawValue == selectedCategory)
+            guard catMatch else { return false }
+            let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !q.isEmpty else { return true }
+            return p.name.lowercased().contains(q)
+                || p.subtitle.lowercased().contains(q)
+                || p.id.lowercased().contains(q)
+                || p.defaultBaseURL.lowercased().contains(q)
+                || p.recommendedModels.contains { $0.name.lowercased().contains(q) }
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // 顶部标题与搜索栏
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("添加模型提供商")
+                        .font(.headline)
+                    Text("选择国内外主流厂商预设（自动带出接口地址与推荐模型）或标准协议")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                TextField("搜索 OpenRouter / OpenCode / 阿里 / 字节 / DeepSeek…", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 280)
+                Button("关闭") { dismiss() }
+            }
+            .padding(16)
+
+            // 分类筛选标签条
+            Picker("", selection: $selectedCategory) {
+                Text("全部 (\(ProviderPreset.all.count))").tag("all")
+                ForEach(ProviderCategory.allCases) { cat in
+                    let count = ProviderPreset.all.filter { $0.category == cat }.count
+                    Text("\(L10n.tr(cat.rawValue)) (\(count))").tag(cat.rawValue)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
+
+            Divider()
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    ForEach(ProviderCategory.allCases) { cat in
+                        let items = filteredPresets.filter { $0.category == cat }
+                        if !items.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(L(cat.rawValue))
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 4)
+
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 310), spacing: 10)], spacing: 10) {
+                                    ForEach(items) { preset in
+                                        presetCard(preset)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(16)
+            }
+        }
+        .frame(width: 760, height: 560)
+    }
+
+    private func presetCard(_ preset: ProviderPreset) -> some View {
+        Button {
+            onSelect(preset)
+            dismiss()
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Text(preset.badgeText)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(preset.badgeColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(preset.name)
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(preset.kind.shortBadge)
+                            .font(.system(size: 10, weight: .medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.12))
+                            .foregroundStyle(.secondary)
+                            .clipShape(Capsule())
+                    }
+                    Text(preset.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    if !preset.recommendedModels.isEmpty {
+                        Text("预置：\(preset.recommendedModels.map(\.name).prefix(3).joined(separator: "、"))")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(AppTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - 弹窗 2：从远端 /models 接口拉取并勾选模型
+
+private struct RemoteModelPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let providerName: String
+    let remoteModels: [String]
+    let existingNames: Set<String>
+    let onAdd: ([String]) -> Void
+
+    @State private var filter = ""
+    @State private var selected: Set<String> = []
+
+    private var filtered: [String] {
+        let q = filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return remoteModels }
+        return remoteModels.filter { $0.lowercased().contains(q) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("从「\(providerName)」选择模型")
+                        .font(.headline)
+                    Text("共发现 \(remoteModels.count) 个远端模型，勾选后点击「添加所选」")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                TextField("过滤模型 ID…", text: $filter)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
+            }
+            .padding(16)
+
+            Divider()
+
+            List(filtered, id: \.self) { id in
+                let alreadyExists = existingNames.contains(id)
+                HStack {
+                    Toggle(isOn: Binding(
+                        get: { alreadyExists || selected.contains(id) },
+                        set: { on in
+                            guard !alreadyExists else { return }
+                            if on { selected.insert(id) } else { selected.remove(id) }
+                        }
+                    )) {
+                        Text(id)
+                            .font(.system(.callout, design: .monospaced))
+                    }
+                    .toggleStyle(.checkbox)
+                    .disabled(alreadyExists)
+
+                    Spacer()
+                    if alreadyExists {
+                        Text("已添加")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Text("已勾选 \(selected.count) 个新模型")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("取消") { dismiss() }
+                Button("添加所选 (\(selected.count))") {
+                    onAdd(Array(selected).sorted())
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selected.isEmpty)
+            }
+            .padding(14)
+        }
+        .frame(width: 540, height: 460)
+    }
+}
+
+// MARK: - 分页 3：模型分配（按能力筛选，支持所有已启用的提供商）
 
 private struct AssignTab: View {
     struct StageNeed: Identifiable {
@@ -429,14 +1195,14 @@ private struct AssignTab: View {
                         VStack(alignment: .trailing, spacing: 2) {
                             Picker("", selection: binding(n.step)) {
                                 Text("跟随模板").tag("")
-                                ForEach(store.providers) { pr in
-                                    ForEach(pr.models.filter { $0.capabilities.contains(n.capability) }) { mo in
-                                        Text("\(pr.displayName) · \(mo.name)").tag("\(pr.id)|\(mo.id)")
+                                ForEach(store.providers.filter(\.enabled)) { pr in
+                                    ForEach(pr.models.filter { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty && $0.capabilities.contains(n.capability) }) { mo in
+                                        Text("\(pr.displayName) · \(mo.name)（\(pr.kind.shortBadge)）").tag("\(pr.id)|\(mo.id)")
                                     }
                                 }
                             }
                             .labelsHidden()
-                            .frame(width: 340)
+                            .frame(width: 380)
                             Text("需要能力：\(n.capability.label)")
                                 .font(.caption2).foregroundStyle(.tertiary)
                         }
@@ -444,9 +1210,9 @@ private struct AssignTab: View {
                     .padding(.vertical, 2)
                 }
             } header: {
-                Text("各阶段使用的模型（只列出声明了对应能力的模型）")
+                Text("各阶段使用的模型（只列出已启用提供商中声明了对应能力的模型）")
             } footer: {
-                Text("能力在「模型提供商」页为每个模型勾选；选「跟随模板」用当前模板内置的引擎与参数。此处的分配优先于模板。")
+                Text("能力在「模型提供商」页为每个模型勾选；选「跟随模板」用当前模板内置的引擎与参数。此处的分配优先于模板，且翻译、语义切分、术语提取均已打通 OpenAI / Responses / Anthropic / Gemini 全协议。")
             }
         }
         .formStyle(.grouped)

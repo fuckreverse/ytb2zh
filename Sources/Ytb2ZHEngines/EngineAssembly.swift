@@ -14,7 +14,7 @@ public enum EngineAssembly {
                 NullVocalSeparator().descriptor, NativeDemucsSeparator().descriptor]),
             .init(step: .transcribe, descriptors: [
                 NativeWhisperEngine().descriptor, WhisperCliEngine().descriptor,
-                SrtTranscribeEngine().descriptor]),
+                OpenAITranscribeEngine().descriptor, SrtTranscribeEngine().descriptor]),
             .init(step: .segment, descriptors: [
                 PunctSegmentationEngine().descriptor, LLMSegmentationEngine().descriptor]),
             .init(step: .summarize, descriptors: [
@@ -52,6 +52,7 @@ public enum EngineAssembly {
         let transcriber: any TranscribeEngine = {
             switch id(.transcribe, "whisper-native") {
             case "whisper-cpp": WhisperCliEngine()      // 旧 sidecar，向后兼容
+            case "openai-asr": OpenAITranscribeEngine() // OpenAI 兼容 /v1/audio/transcriptions
             case "srt": SrtTranscribeEngine()
             case "whisper-native": NativeWhisperEngine() // 默认：内嵌 whisper.cpp，零外部二进制
             default: NativeWhisperEngine()

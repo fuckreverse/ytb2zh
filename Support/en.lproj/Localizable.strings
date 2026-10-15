@@ -533,3 +533,35 @@
 "清除" = "Clear";
 
 "导入 Netscape 格式的 YouTube Cookie；遇到登录或反机器人验证时使用。Cookie 内容保留在原文件中。" = "Import YouTube cookies in Netscape format for sign-in or bot verification. Cookie contents stay in the selected file.";
+
+/* MARK: 模型提供商预设库与标准协议 */
+"中国主流大模型" = "Chinese Mainstream LLMs";
+"聚合网关与 AI 编程" = "Aggregators & Coding Gateways";
+"国际主流厂商" = "Global Providers";
+"标准协议与本地引擎" = "Standard Protocols & Local";
+"OpenAI 兼容 (Chat / Audio)" = "OpenAI Compatible (Chat / Audio)";
+"OpenAI Responses (/v1/responses)" = "OpenAI Responses (/v1/responses)";
+"Anthropic Messages (/v1/messages)" = "Anthropic Messages (/v1/messages)";
+"Google Gemini (v1beta)" = "Google Gemini (v1beta)";
+"百炼原生 TTS (DashScope WS)" = "Bailian Native TTS (DashScope WS)";
+"Edge TTS (免费神经语音)" = "Edge TTS (Free Neural Voice)";
+"本地 TTS (say / Sherpa-Onnx)" = "Local TTS (say / Sherpa-Onnx)";
+"接口地址（到 /v1 或 /v1/responses）" = "Endpoint (up to /v1 or /v1/responses)";
+"Base URL（到 /v1beta）" = "Base URL (up to /v1beta)";
+"Base URL（到 /v1 或 /v3）" = "Base URL (up to /v1 or /v3)";
+"搜索已添加的服务商…" = "Search configured providers…";
+"尚未添加提供商" = "No providers added yet";
+"无匹配提供商" = "No matching providers";
+"仅按底层协议新建空白项" = "Create Blank by Protocol";
+"连接与标准协议" = "Connection & Standard Protocol";
+"显示名称" = "Display Name";
+"标准协议 / 引擎" = "Standard Protocol / Engine";
+"获取 API Key" = "Get API Key";
+"启用" = "Enable";
+"检测连通性" = "Test Connection";
+"手动添加模型" = "Add Model Manually";
+"填入推荐模型" = "Add Recommended Models";
+"从接口拉取模型 (/models)" = "Fetch Models (/models)";
+"正在拉取…" = "Fetching…";
+"添加模型提供商" = "Add Model Provider";
+"选择国内外主流厂商预设（自动带出接口地址与推荐模型）或标准协议" = "Choose from popular global & Chinese provider presets or standard protocols";

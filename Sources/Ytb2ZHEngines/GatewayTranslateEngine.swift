@@ -13,7 +13,7 @@ public struct GatewayTranslateEngine: TranslateEngine {
                           progress: @Sendable @escaping (Double, String?) -> Void) async throws -> [SpeechUnit] {
         try await TranslateCore.runTranslate(units: inputUnits, options: options, progress: progress) { system, user in
             try await Self.callLLM(endpoint: options.endpoint, model: options.model,
-                                   system: system, user: user)
+                                   apiKey: options.apiKey, system: system, user: user)
         }
     }
 
@@ -48,10 +48,17 @@ public struct GatewayTranslateEngine: TranslateEngine {
         }
     }
 
-    // MARK: Responses API 客户端（translate.py 移植）
+    // MARK: Responses API 客户端（translate.py 移植，支持可选 Bearer Key 与智能端点补全）
 
-    static func callLLM(endpoint: String, model: String, system: String, user: String,
-                        retries: Int = 4) async throws -> String {
+    public static func resolveResponsesURL(_ endpoint: String) -> String {
+        let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasSuffix("/responses") { return trimmed }
+        if trimmed.hasSuffix("/") { return trimmed + "responses" }
+        return trimmed + "/responses"
+    }
+
+    public static func callLLM(endpoint: String, model: String, apiKey: String = "",
+                               system: String, user: String, retries: Int = 4) async throws -> String {
         struct Body: Encodable {
             let model: String
             let input: [Message]
@@ -60,9 +67,17 @@ public struct GatewayTranslateEngine: TranslateEngine {
             let role: String
             let content: String
         }
-        var req = URLRequest(url: URL(string: endpoint)!)
+        let urlString = resolveResponsesURL(endpoint)
+        guard let url = URL(string: urlString) else {
+            throw EngineError.notConfigured("Responses 端点地址无效：\(endpoint)")
+        }
+        var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
         req.timeoutInterval = 300
         req.httpBody = try JSONEncoder().encode(Body(
             model: model,
@@ -81,20 +96,25 @@ public struct GatewayTranslateEngine: TranslateEngine {
                     throw EngineError.engineFailure(
                         "网关 HTTP \(http.statusCode)：\(String(data: data.prefix(400), encoding: .utf8) ?? "")")
                 }
-                // 解析 output[] → message → output_text
-                guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let outputs = obj["output"] as? [[String: Any]] else {
+                // 解析 output[] → message → output_text（同时兼容顶层 output_text）
+                guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                     throw EngineError.engineFailure("网关返回结构异常")
                 }
                 var texts: [String] = []
-                for o in outputs where (o["type"] as? String) == "message" {
-                    if let contents = o["content"] as? [[String: Any]] {
-                        for c in contents where (c["type"] as? String) == "output_text" {
-                            if let t = c["text"] as? String { texts.append(t) }
+                if let outputs = obj["output"] as? [[String: Any]] {
+                    for o in outputs where (o["type"] as? String) == "message" {
+                        if let contents = o["content"] as? [[String: Any]] {
+                            for c in contents where (c["type"] as? String) == "output_text" || (c["type"] as? String) == "text" {
+                                if let t = c["text"] as? String { texts.append(t) }
+                            }
                         }
                     }
                 }
-                let out = texts.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+                if texts.isEmpty, let direct = obj["output_text"] as? String {
+                    texts.append(direct)
+                }
+                let out = OpenAICompatTranslateEngine.stripThinkTags(texts.joined())
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 if !out.isEmpty { return out }
                 lastError = "空回复"
             } catch {

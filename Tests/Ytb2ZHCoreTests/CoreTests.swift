@@ -300,4 +300,29 @@ final class CoreTests: XCTestCase {
         let d2 = try XCTUnwrap(ffprobeDuration(dest))
         XCTAssertEqual(d2, 5, accuracy: 1.5)
     }
+
+    func testMultiProtocolOptionsBackwardCompatAndRoundTrip() throws {
+        var p = Profile.balanced
+        p.translate.compatProtocol = "anthropic"
+        p.translate.apiKey = "sk-resp"
+        p.segmentation.apiProtocol = "openai"
+        p.segmentation.apiKey = "sk-seg"
+        p.terminology.apiProtocol = "gemini"
+        p.terminology.apiKey = "sk-term"
+        p.transcribe.compatBaseURL = "https://api.siliconflow.cn/v1"
+        p.transcribe.compatAPIKey = "sk-asr"
+        p.transcribe.compatModel = "FunAudioLLM/SenseVoiceSmall"
+
+        let data = try JSONEncoder().encode(p)
+        let decoded = try JSONDecoder().decode(Profile.self, from: data)
+        XCTAssertEqual(decoded.translate.compatProtocol, "anthropic")
+        XCTAssertEqual(decoded.translate.apiKey, "sk-resp")
+        XCTAssertEqual(decoded.segmentation.apiProtocol, "openai")
+        XCTAssertEqual(decoded.segmentation.apiKey, "sk-seg")
+        XCTAssertEqual(decoded.terminology.apiProtocol, "gemini")
+        XCTAssertEqual(decoded.terminology.apiKey, "sk-term")
+        XCTAssertEqual(decoded.transcribe.compatBaseURL, "https://api.siliconflow.cn/v1")
+        XCTAssertEqual(decoded.transcribe.compatAPIKey, "sk-asr")
+        XCTAssertEqual(decoded.transcribe.compatModel, "FunAudioLLM/SenseVoiceSmall")
+    }
 }
