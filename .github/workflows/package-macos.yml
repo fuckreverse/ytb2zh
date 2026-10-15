@@ -1,0 +1,64 @@
+name: Package macOS app
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    # sherpa-onnx is currently vendored for Apple Silicon only.
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify toolchain
+        run: |
+          test "$(uname -m)" = arm64
+          xcodebuild -version
+          swift --version
+      - name: Restore native dependencies
+        uses: actions/cache@v4
+        with:
+          path: Frameworks
+          key: native-macos-arm64-${{ hashFiles('Scripts/bootstrap-deps.sh') }}
+      - name: Bootstrap native dependencies
+        run: bash Scripts/bootstrap-deps.sh
+      - name: Test Videx
+        run: swift test --package-path Videx
+      - name: Test application
+        run: swift test
+      - name: Build release app
+        env:
+          CONFIGURATION: release
+          APP_BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            export APP_VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          ./Scripts/bundle-app.sh
+      - name: Archive and checksum
+        run: |
+          mkdir -p .build/artifacts
+          archive="Ytb2ZH-macos-arm64-${GITHUB_SHA:0:7}.app.zip"
+          ditto -c -k --sequesterRsrc --keepParent .build/Ytb2ZH.app ".build/artifacts/$archive"
+          cd .build/artifacts
+          shasum -a 256 "$archive" > "$archive.sha256"
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ytb2ZH-macos-arm64-${{ github.sha }}
+          path: .build/artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

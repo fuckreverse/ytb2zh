@@ -213,3 +213,16 @@ make bundle               # 打包 .app（含 i18n 资源与图标）
 ## 开发与维护文档
 
 架构、管线算法、实时播放、Videx 与开发入口见 [文档导航](Docs/README.md)；语音到语音方案的调研记录见 [S2ST 调研](Docs/s2st-调研.md)。
+
+## GitHub Actions 打包
+
+`Package macOS app` workflow 在推送到 `main`、推送 `v*` 标签或 Actions 页面手动触发时运行：恢复原生依赖、执行 Videx 与主项目离线测试、构建 release App，并上传 `.app.zip` 和 SHA-256 校验文件（保留 14 天）。在对应运行的 Artifacts 中下载。版本标签使用 `v1.2.3` 这样的数字版本；普通构建默认版本为 1.1，构建号使用 Actions run number。
+
+当前产物面向 Apple Silicon（arm64），最低系统声明为 macOS 14，与 Swift Package 配置一致。包内包含 whisper.framework、EJS、语言资源和许可证；ffmpeg / ffprobe 及模型仍按前面的依赖说明准备。使用 ad-hoc 签名，未做 Developer ID 签名或 Apple 公证，首次打开可能触发 Gatekeeper 提示。此 workflow 上传构建产物，不自动发布 GitHub Release。
+
+本地使用同一脚本打包：
+
+```bash
+make bundle CONFIGURATION=release
+# 可选 APP_VERSION=1.2.3 APP_BUILD_NUMBER=123
+```
