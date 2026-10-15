@@ -18,7 +18,7 @@
 
 ---
 
-Swift 单语言实现，视频/元数据提取用内置 Videx 纯 Swift 库（YouTube/B站/抖音/TikTok），其余外部能力（whisper.cpp / ffmpeg / edge-tts / demucs）以 sidecar 接入，每一步都是协议化可插拔引擎；yt-dlp 仅作为备用（内置提取失败时才按需自动下载并切换使用，默认零依赖）。
+Swift 单语言实现，视频/元数据提取用内置 Videx 纯 Swift 库（YouTube/B站/抖音/TikTok），whisper.cpp / demucs.cpp / sherpa-onnx / edge-tts 均内置直连（ffmpeg 是唯一必需的 sidecar），每一步都是协议化可插拔引擎；yt-dlp 仅作为备用（内置提取失败时才按需自动下载并切换使用，默认零依赖）。
 
 架构源自 vid2zh 管线（`~/vid2zh`，Python 原型，已验证全片效果），本仓库是工程化客户端版本。功能吸收自 VideoLingo / pyVideoTrans 的评估结论（术语表、三步翻译、Netflix 字幕标准、多通道引擎、批量任务、断点编辑等）。
 
@@ -28,6 +28,7 @@ Swift 单语言实现，视频/元数据提取用内置 Videx 纯 Swift 库（Yo
 - 📡 **实时伪直播**：处理约 4x 实时，边处理边用 AVPlayer 看——HLS 分片滚动推进、双语字幕同步、seek 回看已配音区间。
 - 🧩 **协议化引擎**：九步各自对应一个 Swift 协议，换引擎 = 实现协议 + 注册一行；本地 whisper.cpp / demucs.cpp / sherpa-onnx / edge-tts 内置直连，默认零外部依赖。
 - 🌐 **内置 Videx 提取**：纯 Swift 实现 YouTube / B站 / 抖音 / TikTok 的视频与元数据提取、搜索、频道浏览；yt-dlp 仅作按需兑底。
+- 🛡 **原生 Web PO Token**：内置 WKWebView 执行 BotGuard，分别生成会话/视频绑定的媒体、player 与字幕 Token；缓存按视频、Cookie 会话和代理隔离，最长复用 6 小时。开关与诊断在「设置 → 网络设置 → YouTube 会话」。仍需满足视频的登录和访问权限，实测范围见 [WebPO 对齐记录](Videx/PO-TOKEN-PARITY.md)。
 - 📖 **翻译质量**：术语表统一译法、三步翻译（直译→反思→意译）、领域感知 prompt、Netflix 单行字幕标准、中文配音时长自适应。
 - 🖥 **完整 GUI**：封面墙搜索/媒体库/订阅预翻译/任务中心（译文与术语编辑器）/参数面板，CLI 与 GUI 共享同一引擎内核。
 
@@ -59,18 +60,20 @@ auto    demucs*   whisper  punct/LLM  gateway-terms*  LLM    百炼/兼容/Edge 
 | --- | --- |
 | download | `auto`（Videx 原生优先、内置失败时按需下载 yt-dlp 兑底、本地路径→导入）、`videx`、`yt-dlp`、`file` |
 | separate | `none`、`demucs`（人声/伴奏分离，demucs.cpp 进程内推理，权重自动下载） |
-| transcribe | `whisper-cpp`（本地词级时间戳）、`srt`（外部 SRT 导入） |
+| transcribe | `whisper-native`（内嵌 whisper.cpp，Metal 加速，模型自动下载）、`whisper-cpp`（sidecar，向后兼容）、`srt`（外部 SRT 导入） |
 | segment | `punct`（标点规则切分）、`llm-seg`（punct 粗切 + LLM 重组） |
 | summarize | `none`、`gateway-terms`（LLM 术语提取 → terminology.json，可人工修订） |
 | translate | `gateway`（Responses API）、`compat`（任意 OpenAI 兼容 chat/completions） |
-| synthesize | `bailian`（qwen-audio WS）、`openai-tts`（/v1/audio/speech）、`edge-tts`（免费微软语音）、`none` |
+| synthesize | `bailian`（qwen-audio WS）、`openai-tts`（/v1/audio/speech）、`edge-tts`（免费微软语音）、`local-say`（macOS 内置）、`sherpa-onnx`（离线 vits，模型自动下载）、`none` |
 | schedule | `drift`（漂移上限调度）、`none` |
-| compose | `ffmpeg` |
+| compose | `ffmpeg`（配音轨拼接 + SRT 烧字幕 + 音频替换）、`sidecar`（旁挂 SRT + 无烧录成片，视频不重编码，供外部剪辑） |
 
 关键设计（继承 vid2zh 实测经验）：
 
 - **语义切分**：whisper 原生分段 96% 是半句，改为在词级时间戳上按英文句读重组——句末标点必收、逗号处累计 ≥7s 收、13s 强制收；`llm-seg` 再让 LLM 按完整语义重组。
 - **对齐调度**（`DriftSchedulerEngine`，纯算法）：中文按 `，；、` 切子句逐条合成，使停顿成为可调参数；排布 `ns = max(prev_end + gap, os − driftCap)` 再钳到 `os + lagCap`（配音最多领先/落后画面各 1.2s / 0.8s）；富余时间先扩子句停顿（0.25–1.3s）再慢放（≤15%），不足则加速（≤1.3x）。
+- **字幕烧录降级**：成片步启动时探测 ffmpeg 滤镜表——有 libass 走 `subtitles` 烧录；用户 PATH 里的精简 ffmpeg 缺 libass 时自动降级为 mov_text 软字幕轨 + 旁挂 SRT（视频顺带不再重编码），不再以一句难懂的 "No such filter" 让整步失败。想要旁挂输出时也可主动选 `sidecar` 引擎。
+- **合成语速**（`synth.rate`，0.5–2.0，GUI「配音音色 → 合成语速」滑块）：五个配音引擎全部支持原生变速（百炼 `rate` / OpenAI `speed` / Edge SSML prosody / `say -r` / sherpa speed），合成产物即目标语速，音质优于音频后处理；子句缓存按语速分目录，改语速不污染旧产物。协议里的 `supportsRateControl` 能力位由 Pipeline 真实消费：不支持的引擎由调度层把语速折算进 atempo 兜底（超界自动链式拆分）。
 - **术语表**：翻译前 LLM 扫全文抽取领域术语（落盘 `terminology.json`），注入翻译 prompt 强制统一译法；GUI/CLI 均可人工修订后从翻译步续跑。
 - **三步翻译**（VideoLingo 三步法）：直译 → 反思审校 → 意译终稿，`translate.quality=threePass` 开启；`singlePass` 直出。
 - **Netflix 单行字幕标准**：`compose.subtitleMaxLength`（默认 75）超长行按标点二次硬切，`subtitleTargetMultiplier` 控制行长偏置；`compose.bilingualSubtitles` 中英双语。
@@ -165,7 +168,11 @@ ytb2zh verify                              # 逐引擎真机自检（30s 素材�
 make app
 ```
 
-左侧模板列表点按载入为派生起点；右侧参数面板全部是滑杆、步进器、选择器——漂移上限、停顿范围、语速倍率、音色、字号、单行字数上限、双语字幕、术语开关、翻译质量、目标语言等无手输；调整后可另存为用户模板（Application Support/Ytb2ZH/Templates）。运行时显示九步进度条。
+侧栏提供播放、媒体库、订阅、视频转换与任务中心。播放页统一接收视频链接、频道/播放列表链接或 YouTube 关键词，支持中文译配与原声模式，`⌘L` 定位输入框。媒体库提供封面卡片与继续观看进度。
+
+「视频转换」用场景卡片选择模板，常用的音色、翻译质量和字幕选项优先展示；引擎、并发、对齐与字幕微调收在高级参数中。可预读视频标题与封面，调整后另存为用户模板（Application Support/Ytb2ZH/Templates），`⌘Return` 开始转换。任务中心自动刷新阶段进度，失败任务显示日志中的原因并支持重试。
+
+「应用设置 → 网络设置 → 通用」可选择跟随系统、浅色或深色外观；「运行环境」显示 ffmpeg / ffprobe 安装状态。首次使用前仍需配置翻译服务与配音密钥，或选择无需密钥的配音引擎。
 
 任务中心：历史任务列表（完成度 / 失败标记）、一键断点续跑、译文编辑器（改中文译文与逐单元音色）、术语表编辑器（增删改术语），保存后自动从翻译步续跑。
 
@@ -200,3 +207,7 @@ make bundle               # 打包 .app（含 i18n 资源与图标）
 本项目源码以 MIT 许可证分发，详见 [LICENSE](LICENSE)。
 
 内嵌与运行时使用的第三方组件遵循其各自许可证（Eigen MPL-2.0、demucs.cpp / whisper.cpp / Demucs MIT、sherpa-onnx Apache-2.0 等），完整清单与合规说明（含 sherpa-onnx TTS 链接 espeak-ng 的 GPL-3.0 注意事项）见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。仅以源码形式分发/使用时，MIT 即为全部所需。
+
+## 开发与维护文档
+
+架构、管线算法、实时播放、Videx 与开发入口见 [文档导航](Docs/README.md)；语音到语音方案的调研记录见 [S2ST 调研](Docs/s2st-调研.md)。
