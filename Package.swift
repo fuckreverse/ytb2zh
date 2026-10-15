@@ -21,6 +21,7 @@ let package = Package(
     dependencies: [
         // 本地原生提取库（YouTube/Bilibili/抖音/TikTok），extraction only
         .package(path: "Videx"),
+        .package(url: "https://github.com/markiv/SwiftUI-Shimmer.git", from: "1.5.1"),
     ],
     targets: [
         // MARK: - vendored 原生库
@@ -68,7 +69,9 @@ let package = Package(
         // MARK: - CLI：run / templates / providers，输出 JSON 事件流
         .executableTarget(name: "ytb2zh", dependencies: ["Ytb2ZHCore", "Ytb2ZHEngines"]),
         // MARK: - GUI：SwiftUI 客户端
-        .executableTarget(name: "Ytb2ZHApp", dependencies: ["Ytb2ZHCore", "Ytb2ZHEngines"]),
+        .executableTarget(name: "Ytb2ZHApp", dependencies: ["Ytb2ZHCore", "Ytb2ZHEngines",
+            .product(name: "Shimmer", package: "SwiftUI-Shimmer"),
+        ]),
         // MARK: - 测试
         .testTarget(name: "Ytb2ZHCoreTests", dependencies: ["Ytb2ZHCore"]),
         .testTarget(name: "Ytb2ZHEnginesTests", dependencies: ["Ytb2ZHEngines"]),

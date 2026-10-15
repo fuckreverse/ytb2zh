@@ -136,16 +136,12 @@ struct LibraryView: View {
                     }
                 }
                 Spacer()
-                Picker("分组", selection: $groupModeRaw) {
-                    ForEach(LibraryGroupMode.allCases, id: \.rawValue) { m in
-                        Text(L(m.label)).tag(m.rawValue)
-                    }
-                }
-                .pickerStyle(.segmented)
+                CinemaTabs(values: LibraryGroupMode.allCases.map(\.rawValue), selection: $groupModeRaw, title: { LibraryGroupMode(rawValue: $0).map { L10n.tr($0.label) } ?? $0 })
+
                 .labelsHidden()
-                .frame(width: 180)
+
                 TextField("搜索标题 / 频道 / 链接", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(CinemaTextFieldStyle())
                     .frame(minWidth: 130, idealWidth: 180, maxWidth: 220)
                 Button {
                     playing = nil
@@ -153,8 +149,8 @@ struct LibraryView: View {
                     model.reload()
                 } label: { Label("刷新", systemImage: "arrow.clockwise") }
             }
-            .padding(12)
-            Divider()
+            .padding(24)
+            Divider().opacity(0.5)
             if model.items.isEmpty {
                 AppEmptyState(icon: "film.stack", title: "你的中文视频收藏", message: "译配完成的视频会自动保存到这里，随时播放，无需再次等待。", actionTitle: "添加第一个视频") { navigate(to: .settings) }
             } else if filtered.isEmpty {
@@ -173,14 +169,18 @@ struct LibraryView: View {
         .background(AppTheme.canvas)
         .onAppear { model.reload() }
         .sheet(item: $playing) { item in
-            ReplayPlayerSheet(profile: playProfile(item), url: item.url, title: item.title) {
-                model.reload()
-                onPlayed?()
+            CinemaPresentation {
+                ReplayPlayerSheet(profile: playProfile(item), url: item.url, title: item.title) {
+                    model.reload()
+                    onPlayed?()
+                }
             }
         }
         .sheet(item: $detailItem) { item in
-            VideoInfoSheet(item: item) {
-                playing = item
+            CinemaPresentation {
+                VideoInfoSheet(item: item) {
+                    playing = item
+                }
             }
         }
     }
@@ -251,14 +251,7 @@ struct LibraryView: View {
             } label: {
                 VStack(alignment: .leading, spacing: 6) {
                     ZStack(alignment: .bottomLeading) {
-                        AsyncImage(url: item.thumbnailURL) { phase in
-                            if let img = phase.image {
-                                img.resizable().aspectRatio(16 / 9, contentMode: .fill)
-                            } else {
-                                Rectangle().fill(.quinary)
-                                    .overlay(Image(systemName: "film").font(.title2).foregroundStyle(.secondary))
-                            }
-                        }
+                        ThumbImage(url: item.thumbnailURL?.absoluteString)
                         .aspectRatio(16 / 9, contentMode: .fit)
                         .clipped()
                         .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -414,7 +407,7 @@ struct VideoInfoSheet: View {
                 } label: {
                     Label("播放译制成片", systemImage: "play.fill")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(CinemaButtonStyle(prominent: true))
             }
             .padding(12)
         }
@@ -656,33 +649,41 @@ struct SubscriptionsView: View {
         }
         .background(AppTheme.canvas)
         .sheet(item: $detailVideo) { v in
-            VideoConvertSheet(video: v, status: convertStatus(v), profileName: profile.name,
-                              busy: runner.running,
-                              onConvert: {
-                                  detailVideo = nil
-                                  runner.convert(videos: [v], profile: profile) { onChanged() }
-                              },
-                              onPlay: {
-                                  detailVideo = nil
-                                  playTarget = v
-                              },
-                              onOriginal: {
-                                  detailVideo = nil
-                                  origTarget = v
-                              })
+            CinemaPresentation {
+                VideoConvertSheet(video: v, status: convertStatus(v), profileName: profile.name,
+                                  busy: runner.running,
+                                  onConvert: {
+                                      detailVideo = nil
+                                      runner.convert(videos: [v], profile: profile) { onChanged() }
+                                  },
+                                  onPlay: {
+                                      detailVideo = nil
+                                      playTarget = v
+                                  },
+                                  onOriginal: {
+                                      detailVideo = nil
+                                      origTarget = v
+                                  })
+            }
         }
         .sheet(item: $playTarget) { v in
-            SubReplaySheet(profile: profile, url: v.url, title: v.title) {
-                onChanged()
+            CinemaPresentation {
+                SubReplaySheet(profile: profile, url: v.url, title: v.title) {
+                    onChanged()
+                }
             }
         }
         .sheet(item: $origTarget) { v in
-            OriginalPlayerView(url: v.url,
-                               proxy: AppSettings.effectiveProxy(fallback: profile.download.proxy))
+            CinemaPresentation {
+                OriginalPlayerView(url: v.url,
+                                   proxy: AppSettings.effectiveProxy(fallback: profile.download.proxy))
+            }
         }
-        .sheet(isPresented: $showAdd) { addSheet }
+        .sheet(isPresented: $showAdd) { CinemaPresentation {  addSheet  } }
         .sheet(item: $renameTarget) { sub in
-            renameSheet(sub)
+            CinemaPresentation {
+                renameSheet(sub)
+            }
         }
     }
 
@@ -690,7 +691,7 @@ struct SubscriptionsView: View {
         VStack(spacing: 14) {
             Text("重命名订阅").font(.headline)
             TextField("名称", text: $renameText)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(CinemaTextFieldStyle())
             HStack {
                 Button("取消") { renameTarget = nil }
                     .keyboardShortcut(.cancelAction)
@@ -699,7 +700,7 @@ struct SubscriptionsView: View {
                     store.rename(id: sub.id, name: renameText)
                     renameTarget = nil
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(CinemaButtonStyle(prominent: true))
                 .disabled(renameText.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
@@ -867,7 +868,7 @@ struct SubscriptionsView: View {
             } label: {
                 Label("批量转换 \(checked.count) 个", systemImage: "play.rectangle.on.rectangle")
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(CinemaButtonStyle(prominent: true))
             .disabled(checked.isEmpty || runner.running)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
@@ -893,6 +894,7 @@ struct SubscriptionsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .modifier(MediaCardStyle())
         .contextMenu {
             Button {
                 origTarget = v
@@ -918,7 +920,7 @@ struct SubscriptionsView: View {
                               : (isOn ? "checkmark.circle.fill" : "circle"))
                             .font(.title3)
                             .foregroundStyle(done ? .green
-                                             : (isOn ? .blue : .white),
+                                             : (isOn ? AppTheme.accent : .white),
                                              isOn || done ? .clear : .black.opacity(0.45))
                         statusBadge(v)
                     }
@@ -1036,9 +1038,9 @@ struct SubscriptionsView: View {
         VStack(spacing: 14) {
             Text("添加订阅").font(.headline)
             TextField("名称（可选，默认取链接）", text: $newName)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(CinemaTextFieldStyle())
             TextField("频道 / 播放列表 URL", text: $newURL)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(CinemaTextFieldStyle())
             if !addError.isEmpty {
                 Text(addError).font(.caption).foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1063,7 +1065,7 @@ struct SubscriptionsView: View {
                     showAdd = false
                     refreshSelected()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(CinemaButtonStyle(prominent: true))
                 .disabled(newURL.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
@@ -1133,7 +1135,7 @@ private struct VideoConvertSheet: View {
                 } label: {
                     Label("看原版", systemImage: "film")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(CinemaButtonStyle())
                 .help("不翻译，直接流式播放原声，进度条可任意拖动")
                 Button {
                     dismiss()
@@ -1142,7 +1144,7 @@ private struct VideoConvertSheet: View {
                     Label(status == .done ? "播放译制成品" : "实时播放（边下边译）",
                           systemImage: "play.tv")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(CinemaButtonStyle())
                 .help(status == .done
                       ? "秒开已完成的译制成片"
                       : "进入实时播放器：先下载原声即可观看，播放中一键切换中文配音，也可转成成片")
@@ -1153,7 +1155,7 @@ private struct VideoConvertSheet: View {
                     Label(status == .pending ? "继续转换" : "开始转换",
                           systemImage: "arrow.down.doc")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(CinemaButtonStyle(prominent: true))
                 .disabled(busy)
                 .help("后台跑完整批量管线（下载→转录→切分→翻译→配音→成片），完成自动入媒体库")
             }

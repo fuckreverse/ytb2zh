@@ -56,12 +56,16 @@ struct JobDetailView: View {
         .navigationTitle("任务详情")
         .onAppear(perform: reload)
         .sheet(item: $preview) { f in
-            ArtifactPreviewSheet(file: f)
-                .frame(minWidth: 680, minHeight: 520)
+            CinemaPresentation {
+                ArtifactPreviewSheet(file: f)
+                    .frame(minWidth: 680, minHeight: 520)
+            }
         }
         .sheet(isPresented: $showLog) {
-            LogSheet(jobID: jobID)
-                .frame(minWidth: 680, minHeight: 520)
+            CinemaPresentation {
+                LogSheet(jobID: jobID)
+                    .frame(minWidth: 680, minHeight: 520)
+            }
         }
     }
 
@@ -92,7 +96,7 @@ struct JobDetailView: View {
     // MARK: 步骤时间线 + 逐步重跑
 
     private var stepsCard: some View {
-        GroupBox("步骤") {
+        CinemaSection("步骤") {
             VStack(spacing: 0) {
                 ForEach(Array(StepID.allCases.enumerated()), id: \.element) { idx, step in
                     HStack(spacing: 10) {
@@ -110,7 +114,7 @@ struct JobDetailView: View {
                             NotificationCenter.default.post(
                                 name: .ytb2zhResumeJob, object: ResumeRequest(jobID: jobID, from: step))
                         }
-                        .buttonStyle(.link)
+                        .buttonStyle(CinemaLinkStyle())
                         .font(.caption)
                         .disabled(job.running)
                         .help("丢弃该步及之后的产物，从「\(step.label)」重新处理（前面产物保留复用）")
@@ -160,7 +164,7 @@ struct JobDetailView: View {
     // MARK: 调试循环（改中间数据 → 续跑）
 
     private var debugLoopCard: some View {
-        GroupBox("多次精修（改完中间数据，从对应步骤重跑）") {
+        CinemaSection("多次精修（改完中间数据，从对应步骤重跑）") {
             HStack(spacing: 8) {
                 Button {
                     dismiss()
@@ -181,7 +185,7 @@ struct JobDetailView: View {
     // MARK: 中间产物列表
 
     private var artifactsCard: some View {
-        GroupBox("中间产物（\(files.filter { !$0.isDir }.count) 个文件）") {
+        CinemaSection("中间产物（\(files.filter { !$0.isDir }.count) 个文件）") {
             if files.isEmpty {
                 Text("暂无产物").font(.caption).foregroundStyle(.secondary).padding(.vertical, 8)
             } else {
@@ -189,7 +193,7 @@ struct JobDetailView: View {
                     ForEach(files) { f in
                         HStack(spacing: 10) {
                             Image(systemName: icon(for: f))
-                                .foregroundStyle(f.isMedia ? Color.blue : Color.secondary)
+                                .foregroundStyle(f.isMedia ? AppTheme.accent : Color.secondary)
                                 .frame(width: 18)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(f.name).font(.system(.callout, design: .monospaced))
@@ -204,12 +208,12 @@ struct JobDetailView: View {
                             Text(Self.dateText(f.modified))
                                 .font(.caption2).foregroundStyle(.tertiary)
                             if f.previewable {
-                                Button("预览") { preview = f }.buttonStyle(.link).font(.caption)
+                                Button("预览") { preview = f }.buttonStyle(CinemaLinkStyle()).font(.caption)
                             }
                             Button {
                                 NSWorkspace.shared.activateFileViewerSelecting([f.url])
                             } label: { Image(systemName: "arrow.up.right.square") }
-                                .buttonStyle(.link)
+                                .buttonStyle(CinemaLinkStyle())
                                 .help("在 Finder 中显示")
                         }
                         .padding(.vertical, 4)
@@ -235,16 +239,16 @@ struct JobDetailView: View {
     // MARK: 日志
 
     private var logCard: some View {
-        GroupBox("运行日志") {
+        CinemaSection("运行日志") {
             HStack {
                 let log = store.jobDir(id: jobID).appendingPathComponent("log.txt")
                 if FileManager.default.fileExists(atPath: log.path) {
                     Text("log.txt 随运行持续追加，跨续跑保留").font(.caption).foregroundStyle(.secondary)
                     Spacer()
-                    Button("查看全文") { showLog = true }.buttonStyle(.link)
+                    Button("查看全文") { showLog = true }.buttonStyle(CinemaLinkStyle())
                     Button {
                         NSWorkspace.shared.activateFileViewerSelecting([log])
-                    } label: { Image(systemName: "arrow.up.right.square") }.buttonStyle(.link)
+                    } label: { Image(systemName: "arrow.up.right.square") }.buttonStyle(CinemaLinkStyle())
                 } else {
                     Text("还没有日志（旧任务或尚未运行）").font(.caption).foregroundStyle(.secondary)
                     Spacer()

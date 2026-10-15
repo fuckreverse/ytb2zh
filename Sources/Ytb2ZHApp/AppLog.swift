@@ -108,7 +108,7 @@ struct AppLogSheet: View {
                 Text("应用日志（最近 \(AppLog.capacity) 行）").font(.headline)
                 Spacer()
                 Toggle("仅警告/错误", isOn: $onlyWarn)
-                    .toggleStyle(.checkbox)
+                    .toggleStyle(CinemaToggleStyle())
                     .font(.caption)
                 Button("清空") { log.clear() }
                 Button("复制全部") {

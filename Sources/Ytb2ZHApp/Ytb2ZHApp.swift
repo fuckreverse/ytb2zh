@@ -40,7 +40,7 @@ enum AppPage: String, CaseIterable, Identifiable {
 }
 
 struct ContentView: View {
-    @AppStorage("appAppearance") private var appearance = "system"
+    @AppStorage("appAppearance") private var appearance = "dark"
     @State private var page: AppPage = .player
     @State private var selectedTemplate: TemplateStore.Entry?
     @State private var workingProfile: Profile = .balanced
@@ -56,10 +56,48 @@ struct ContentView: View {
     private let templateStore = TemplateStore()
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(page: $page)
-                .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 250)
-        } detail: {
+        HStack(spacing: 0) {
+            SidebarView(page: $page).frame(width: 218)
+            Divider()
+            VStack(spacing: 0) {
+                HStack(spacing: 12) {
+                    Text(L(page.rawValue)).font(.system(size: 15, weight: .semibold))
+                    Spacer()
+                    Label("让视频说中文", systemImage: "waveform")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button { page = .settings } label: {
+                        Label("添加视频", systemImage: "plus")
+                    }.buttonStyle(CinemaButtonStyle(prominent: true))
+                }.padding(.horizontal, 28).padding(.vertical, 14)
+                Divider().opacity(0.5)
+                pageContent.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background(AppTheme.canvas)
+        .buttonStyle(CinemaButtonStyle())
+        .textFieldStyle(CinemaTextFieldStyle())
+        .toggleStyle(CinemaToggleStyle())
+        .menuStyle(CinemaMenuStyle())
+        .progressViewStyle(CinemaProgressStyle())
+        .labeledContentStyle(CinemaLabeledContentStyle())
+        .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
+        .onReceive(NotificationCenter.default.publisher(for: .ytb2zhNavigate)) { note in
+            if let target = note.object as? AppPage { page = target }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .ytb2zhResumeJob)) { note in
+            guard let req = note.object as? ResumeRequest else { return }
+            page = .jobs
+            resume(req)
+        }
+        .confirmationDialog("切换模板将放弃未保存的修改", isPresented: Binding(get: { pendingLoad != nil }, set: { if !$0 { pendingLoad = nil } }), titleVisibility: .visible, presenting: pendingLoad) { entry in
+            Button("放弃修改，载入「\(entry.profile.name)」", role: .destructive) { loadTemplate(entry) }
+            Button("取消", role: .cancel) { }
+        } message: { _ in
+            Text("当前参数尚未保存为模板，切换会丢失修改。")
+        }
+    }
+
+    @ViewBuilder private var pageContent: some View {
             switch page {
             case .player:
                 LivePlayerView(profile: workingProfile, session: liveSession)
@@ -84,29 +122,6 @@ struct ContentView: View {
                 AppSettingsView()
                     .navigationTitle("应用设置")
             }
-        }
-        .background(AppTheme.canvas)
-        .preferredColorScheme(appearance == "dark" ? .dark : appearance == "light" ? .light : nil)
-        .onReceive(NotificationCenter.default.publisher(for: .ytb2zhNavigate)) { note in
-            if let target = note.object as? AppPage { page = target }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .ytb2zhResumeJob)) { note in
-            guard let req = note.object as? ResumeRequest else { return }
-            page = .jobs
-            resume(req)
-        }
-        .confirmationDialog("切换模板将放弃未保存的修改",
-                            isPresented: Binding(get: { pendingLoad != nil },
-                                                 set: { if !$0 { pendingLoad = nil } }),
-                            titleVisibility: .visible,
-                            presenting: pendingLoad) { entry in
-            Button("放弃修改，载入「\(entry.profile.name)」", role: .destructive) {
-                loadTemplate(entry)
-            }
-            Button("取消", role: .cancel) { }
-        } message: { _ in
-            Text("你在「\(workingProfile.name)」基础上调整的参数尚未另存为模板，直接切换会丢失。可先点右上角「模板 → 另存为模板」保留。")
-        }
     }
 
     // MARK: 模板载入/删除（带未保存修改保护）
@@ -170,36 +185,44 @@ struct ContentView: View {
 struct SidebarView: View {
     @Binding var page: AppPage
     var body: some View {
-        List(selection: $page) {
-            Section {
-                ForEach([AppPage.player, .library, .subscriptions, .settings, .jobs]) { p in
-                    Label(L(p.rawValue), systemImage: p.icon).tag(p)
-                }
-            }
-            Section("偏好设置") {
-                Label(L(AppPage.app.rawValue), systemImage: AppPage.app.icon).tag(AppPage.app)
-            }
-        }
-        .listStyle(.sidebar)
-        .safeAreaInset(edge: .top) {
+        VStack(alignment: .leading, spacing: 28) {
             HStack(spacing: 10) {
-                Image(systemName: "play.rectangle.on.rectangle.fill")
-                    .foregroundStyle(.white).padding(9)
+                Image(systemName: "play.fill").font(.system(size: 18, weight: .black))
+                    .foregroundStyle(.white).frame(width: 38, height: 38)
                     .background(AppTheme.accent.gradient, in: RoundedRectangle(cornerRadius: 12))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("ytb2zh").font(.headline)
-                    Text("让视频说中文").font(.caption).foregroundStyle(.secondary)
-                }
+                Text("ytb2zh").font(.system(size: 23, weight: .heavy)).tracking(-1)
+            }.padding(.top, 14).padding(.horizontal, 12)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("探索与观看").font(.system(size: 10, weight: .semibold)).tracking(2)
+                    .foregroundStyle(.secondary).padding(12)
+                ForEach([AppPage.player, .library, .subscriptions]) { item in navItem(item) }
+                Text("创作工作台").font(.system(size: 10, weight: .semibold)).tracking(2)
+                    .foregroundStyle(.secondary).padding(12).padding(.top, 16)
+                ForEach([AppPage.settings, .jobs]) { item in navItem(item) }
+            }
+            Spacer()
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: "waveform.circle.fill").font(.title2).foregroundStyle(AppTheme.accent)
+                Text("世界很大，听懂更多").font(.system(size: 12, weight: .semibold))
+                Text("原声与中文，自由切换").font(.caption2).foregroundStyle(.secondary)
+            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 14))
+            navItem(.app)
+        }.padding(16).background(AppTheme.sidebar)
+    }
+
+    private func navItem(_ item: AppPage) -> some View {
+        Button { page = item } label: {
+            HStack(spacing: 12) {
+                Image(systemName: item.icon).font(.system(size: 16, weight: .medium)).frame(width: 22)
+                Text(L(item.rawValue)).font(.system(size: 13, weight: page == item ? .semibold : .medium))
                 Spacer()
-            }.padding(16)
-        }
-        .safeAreaInset(edge: .bottom) {
-            HStack {
-                Image(systemName: "sparkles").foregroundStyle(AppTheme.accent)
-                Text("场景预设在「视频转换」中选择")
-                    .font(.caption).foregroundStyle(.secondary)
-            }.padding(16)
-        }
+                if page == item { Circle().fill(AppTheme.accent).frame(width: 5, height: 5) }
+            }.padding(.horizontal, 14).padding(.vertical, 13)
+                .foregroundStyle(page == item ? AppTheme.accent : .primary)
+                .background(page == item ? AppTheme.accent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 10))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityAddTraits(page == item ? .isSelected : [])
     }
 }
 
@@ -241,18 +264,18 @@ struct SettingsPane: View {
 
             Divider()
 
-            Form {
-                Section {
+            CinemaForm {
+                CinemaSection {
                     PageHeading(title: "把精彩内容，变成中文", subtitle: "选择视频与场景，译配完成后自动保存到媒体库")
                     TextField("视频、频道或播放列表链接", text: $videoURL)
-                        .textFieldStyle(.roundedBorder).controlSize(.large)
+                        .textFieldStyle(CinemaTextFieldStyle()).controlSize(.large)
                     VideoSourcePreview(source: videoURL, proxy: AppSettings.effectiveProxy(fallback: workingProfile.download.proxy))
                     if !videoURL.isEmpty {
                         Label(VideoCatalogService.isLikelyListURL(videoURL) ? "频道与播放列表可在播放页展开浏览" : "视频链接已填入，可先试转 3 分钟", systemImage: "link")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Section("选择场景") {
+                CinemaSection("选择场景") {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 12)], spacing: 12) {
                         ForEach(templateStore.all()) { entry in
                             Button { _ = onSelectTemplate(entry) } label: {
@@ -287,7 +310,8 @@ struct SettingsPane: View {
 
                 ParameterPanel(profile: $workingProfile)
             }
-            .formStyle(.grouped)
+
+            .scrollContentBackground(.hidden)
             .frame(maxWidth: 1100)
             .frame(maxWidth: .infinity)
 
@@ -329,33 +353,35 @@ struct SaveTemplateMenu: View {
             Label("模板", systemImage: "square.and.arrow.down")
         }
         .sheet(isPresented: $showSheet) {
-            VStack(spacing: 12) {
-                Text("另存为模板").font(.headline)
-                Text("将保存当前面板的全部参数：引擎组合、翻译风格、音色、对齐调度、字幕与混音等")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 300)
-                TextField("模板名称", text: $newName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 260)
-                if isDuplicateName {
-                    Label("同名模板已存在，保存将覆盖它", systemImage: "exclamationmark.triangle")
-                        .font(.callout).foregroundStyle(.orange)
-                }
-                HStack {
-                    Button("取消") { showSheet = false }
-                    Button("保存") {
-                        var p = profile
-                        p.name = newName.trimmingCharacters(in: .whitespaces)
-                        do { try templateStore.save(p) } catch { return }
-                        showSheet = false
-                        onSaved(p)
+            CinemaPresentation {
+                VStack(spacing: 12) {
+                    Text("另存为模板").font(.headline)
+                    Text("将保存当前面板的全部参数：引擎组合、翻译风格、音色、对齐调度、字幕与混音等")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 300)
+                    TextField("模板名称", text: $newName)
+                        .textFieldStyle(CinemaTextFieldStyle())
+                        .frame(width: 260)
+                    if isDuplicateName {
+                        Label("同名模板已存在，保存将覆盖它", systemImage: "exclamationmark.triangle")
+                            .font(.callout).foregroundStyle(.orange)
                     }
-                    .keyboardShortcut(.return)
-                    .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    HStack {
+                        Button("取消") { showSheet = false }
+                        Button("保存") {
+                            var p = profile
+                            p.name = newName.trimmingCharacters(in: .whitespaces)
+                            do { try templateStore.save(p) } catch { return }
+                            showSheet = false
+                            onSaved(p)
+                        }
+                        .keyboardShortcut(.return)
+                        .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
                 }
+                .padding(24)
             }
-            .padding(24)
         }
     }
 }

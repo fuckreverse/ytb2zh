@@ -24,15 +24,9 @@ struct AppSettingsView: View {
         VStack(spacing: 0) {
             PageHeading(title: "设置你的译配工作空间", subtitle: "管理网络、模型服务与处理能力")
                 .padding(24)
-            Picker("", selection: $tab) {
-                ForEach(Tab.allCases) { t in
-                    Text(L(t.rawValue)).tag(t)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            CinemaTabs(values: Tab.allCases, selection: $tab, title: { $0.rawValue })
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 24).padding(.bottom, 20)
 
             Divider()
 
@@ -50,7 +44,7 @@ struct AppSettingsView: View {
 // MARK: - 分页 1：网络设置
 
 private struct NetworkTab: View {
-    @AppStorage("appAppearance") private var appearance = "system"
+    @AppStorage("appAppearance") private var appearance = "dark"
     @AppStorage(AppSettings.proxyKey) private var proxy = ""
     @AppStorage("youtubeCookieFile") private var youtubeCookieFile = ""
     @AppStorage("youtubeCookieSource") private var youtubeCookieSource = "netscape"
@@ -64,24 +58,23 @@ private struct NetworkTab: View {
     @State private var potStatus = ""
     @State private var potHarvesting = false
     // 界面语言（AppleLanguages 覆盖 + 重启生效）
-    @State private var langSelection: String = L10n.currentLanguage
+    @State private var langSelection: String = {
+        let language = L10n.currentLanguage
+        if language.hasPrefix("zh") { return "zh-Hans" }
+        if language.hasPrefix("en") { return "en" }
+        return "system"
+    }()
     @State private var langNeedsRestart = false
     @State private var showLog = false
 
     var body: some View {
-        Form {
-            Section("通用") {
-                Picker("界面外观", selection: $appearance) {
-                    Text("跟随系统").tag("system")
-                    Text("浅色").tag("light")
-                    Text("深色").tag("dark")
+        CinemaForm {
+            CinemaSection("通用") {
+                LabeledContent("界面外观") {
+                    CinemaSelect("界面外观", selection: $appearance, options: [CinemaOption("system", L10n.tr("跟随系统")), CinemaOption("light", L10n.tr("浅色")), CinemaOption("dark", L10n.tr("深色"))]).frame(width: 260)
                 }
                 LabeledContent("界面语言") {
-                    Picker("", selection: $langSelection) {
-                        Text("跟随系统").tag("system")
-                        Text("简体中文").tag("zh-Hans")
-                        Text("English").tag("en")
-                    }
+                    CinemaSelect("界面语言", selection: $langSelection, options: [CinemaOption("system", L10n.tr("跟随系统")), CinemaOption("zh-Hans", "简体中文"), CinemaOption("en", "English")])
                     .labelsHidden()
                     .frame(width: 200)
                     .onChange(of: langSelection) { _, newValue in
@@ -98,11 +91,11 @@ private struct NetworkTab: View {
                 }
                 LabeledContent("运行日志") {
                     Button("查看应用日志…") { showLog = true }
-                        .sheet(isPresented: $showLog) { AppLogSheet() }
+                        .sheet(isPresented: $showLog) { CinemaPresentation {  AppLogSheet()  } }
                 }
             }
 
-            Section("运行环境") {
+            CinemaSection("运行环境") {
                 ForEach(["ffmpeg", "ffprobe"], id: \.self) { tool in
                     LabeledContent(tool) {
                         if SidecarPaths.which(tool) != nil {
@@ -117,28 +110,25 @@ private struct NetworkTab: View {
                 Text("语音识别模型会在首次使用时自动下载；配音密钥请在模型提供商中配置。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("代理（留空 = 用各模板内置值）") {
+            CinemaSection("代理（留空 = 用各模板内置值）") {
                 LabeledContent("代理地址") {
                     TextField("http://127.0.0.1:7890", text: $proxy)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(CinemaTextFieldStyle())
                         .frame(width: 340)
                 }
                 LabeledContent("代理用于") {
                     HStack(spacing: 14) {
-                        Toggle("视频下载", isOn: $forDownload).toggleStyle(.checkbox)
-                        Toggle("YouTube 搜索", isOn: $forSearch).toggleStyle(.checkbox)
-                        Toggle("Edge TTS 语音合成", isOn: $forEdgeTTS).toggleStyle(.checkbox)
+                        Toggle("视频下载", isOn: $forDownload).toggleStyle(CinemaToggleStyle())
+                        Toggle("YouTube 搜索", isOn: $forSearch).toggleStyle(CinemaToggleStyle())
+                        Toggle("Edge TTS 语音合成", isOn: $forEdgeTTS).toggleStyle(CinemaToggleStyle())
                     }
                 }
                 .help("Videx 原生提取优先；备用 yt-dlp（按需自动下载）、搜索取数与 edge-tts 走外网；百炼/兼容 API 直连国内或由 API 端自行处理，不受此开关影响")
             }
 
-            Section("YouTube 会话") {
-                Picker("会话文件格式", selection: $youtubeCookieSource) {
-                    Text("Netscape cookies.txt").tag("netscape")
-                    Text("Firefox cookies.sqlite").tag("firefox")
-                    Text("Chrome Cookies 数据库").tag("chrome")
-                    Text("Safari Cookies.binarycookies").tag("safari")
+            CinemaSection("YouTube 会话") {
+                LabeledContent("会话文件格式") {
+                    CinemaSelect("会话文件格式", selection: $youtubeCookieSource, options: [CinemaOption("netscape", "Netscape cookies.txt"), CinemaOption("firefox", "Firefox cookies.sqlite"), CinemaOption("chrome", "Chrome Cookies 数据库"), CinemaOption("safari", "Safari Cookies.binarycookies")]).frame(width: 260)
                 }
                 LabeledContent("Cookie 文件") {
                     HStack {
@@ -157,7 +147,7 @@ private struct NetworkTab: View {
                     .font(.caption).foregroundStyle(.secondary)
 
                 Toggle("Web PO Token 收割（实验）", isOn: $youtubeWebPOTEnabled)
-                    .toggleStyle(.checkbox)
+                    .toggleStyle(CinemaToggleStyle())
                 Text("提取时用内置 WebView 执行 BotGuard，为当前视频生成配套的媒体与字幕 PO Token。"
                      + "缓存按视频、会话和代理隔离，最长复用 6 小时；仍需满足视频的登录和访问权限。")
                     .font(.caption).foregroundStyle(.secondary)
@@ -172,7 +162,7 @@ private struct NetworkTab: View {
                 }
             }
 
-            Section("任务存储位置") {
+            CinemaSection("任务存储位置") {
                 LabeledContent("当前目录") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(jobRootPath)
@@ -193,7 +183,8 @@ private struct NetworkTab: View {
                 }
             }
         }
-        .formStyle(.grouped)
+
+        .scrollContentBackground(.hidden)
     }
 
     private func chooseRoot() {
@@ -335,7 +326,7 @@ private struct ProvidersTab: View {
                         Label("添加提供商", systemImage: "plus.circle.fill")
                             .frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(CinemaButtonStyle(prominent: true))
                     .controlSize(.regular)
 
                     Menu {
@@ -360,7 +351,7 @@ private struct ProvidersTab: View {
                         Image(systemName: "list.bullet.indent")
                             .symbolRenderingMode(.hierarchical)
                     }
-                    .menuStyle(.borderlessButton)
+                    .menuStyle(CinemaMenuStyle())
                     .frame(width: 28)
                     .help("快速从分类菜单添加")
                 }
@@ -398,8 +389,10 @@ private struct ProvidersTab: View {
             }
         }
         .sheet(isPresented: $showPresetSheet) {
-            ProviderPresetPickerSheet { chosenPreset in
-                selectedID = store.addPreset(chosenPreset)
+            CinemaPresentation {
+                ProviderPresetPickerSheet { chosenPreset in
+                    selectedID = store.addPreset(chosenPreset)
+                }
             }
         }
     }
@@ -530,7 +523,7 @@ private struct ProvidersTab: View {
                     } label: {
                         Label("浏览全部 \(ProviderPreset.all.count) 个内置服务商与标准协议…", systemImage: "square.grid.2x2")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(CinemaButtonStyle(prominent: true))
                 }
             }
             .padding(28)
@@ -563,9 +556,9 @@ private struct ProviderDetailPane: View {
             sampleModel: val.models.first(where: { !$0.name.isEmpty })?.name ?? "model"
         )
 
-        Form {
+        CinemaForm {
             // —— 顶部服务商名片与开关
-            Section {
+            CinemaSection {
                 HStack(spacing: 12) {
                     Text(val.badgeText)
                         .font(.system(size: 14, weight: .bold, design: .rounded))
@@ -600,31 +593,27 @@ private struct ProviderDetailPane: View {
                             Label("获取 API Key", systemImage: "key.fill")
                                 .font(.caption)
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(CinemaButtonStyle())
                         .controlSize(.small)
                     }
 
                     Toggle("启用", isOn: pr.enabled)
-                        .toggleStyle(.switch)
+                        .toggleStyle(CinemaToggleStyle())
                         .controlSize(.small)
                 }
                 .padding(.vertical, 2)
             }
 
             // —— 接口与标准协议设置
-            Section("连接与标准协议") {
+            CinemaSection("连接与标准协议") {
                 LabeledContent("显示名称") {
                     TextField("如 OpenRouter / 字节火山方舟 / 阿里云百炼", text: pr.name)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(CinemaTextFieldStyle())
                         .frame(maxWidth: 420)
                 }
 
                 LabeledContent("标准协议 / 引擎") {
-                    Picker("", selection: pr.kind) {
-                        ForEach(ProviderKind.allCases) { k in
-                            Text(L(k.label)).tag(k)
-                        }
-                    }
+                    CinemaSelect("标准协议 / 引擎", selection: pr.kind, options: ProviderKind.allCases.map { CinemaOption($0, L10n.tr($0.label)) })
                     .labelsHidden()
                     .frame(maxWidth: 320, alignment: .leading)
                 }
@@ -634,7 +623,7 @@ private struct ProviderDetailPane: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 6) {
                                 TextField(val.preset?.defaultBaseURL ?? val.kind.defaultBaseURL, text: pr.baseURL)
-                                    .textFieldStyle(.roundedBorder)
+                                    .textFieldStyle(CinemaTextFieldStyle())
                                     .frame(maxWidth: 380)
                                 if let def = val.preset?.defaultBaseURL ?? (val.kind.defaultBaseURL.isEmpty ? nil : val.kind.defaultBaseURL),
                                    !def.isEmpty, val.baseURL != def {
@@ -664,7 +653,7 @@ private struct ProviderDetailPane: View {
                                     SecureField("粘贴 API Key（如 sk-...）", text: pr.apiKey)
                                 }
                             }
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(CinemaTextFieldStyle())
                             .frame(maxWidth: 340)
 
                             Button {
@@ -672,7 +661,7 @@ private struct ProviderDetailPane: View {
                             } label: {
                                 Image(systemName: showAPIKey ? "eye.slash" : "eye")
                             }
-                            .buttonStyle(.borderless)
+                            .buttonStyle(CinemaButtonStyle())
                             .help(showAPIKey ? "隐藏密钥" : "显示密钥")
 
                             if val.kind.supportsConnectionTest {
@@ -710,7 +699,7 @@ private struct ProviderDetailPane: View {
             }
 
             // —— 模型列表与能力勾选
-            Section {
+            CinemaSection {
                 if val.models.isEmpty {
                     Text("尚未配置模型，请点击下方「添加模型」或「从接口拉取模型」。")
                         .font(.caption)
@@ -773,14 +762,14 @@ private struct ProviderDetailPane: View {
             }
 
             // —— 底部删除操作
-            Section {
+            CinemaSection {
                 HStack {
                     Button {
                         onOpenPresetLibrary()
                     } label: {
                         Label("继续从预设库添加其他提供商…", systemImage: "plus.square.on.square")
                     }
-                    .buttonStyle(.link)
+                    .buttonStyle(CinemaLinkStyle())
                     .font(.caption)
 
                     Spacer()
@@ -789,30 +778,33 @@ private struct ProviderDetailPane: View {
                         store.removeProvider(id: providerID)
                         onDeleted()
                     }
-                    .buttonStyle(.link)
+                    .buttonStyle(CinemaLinkStyle())
                     .font(.caption)
                 }
             }
         }
-        .formStyle(.grouped)
+
+        .scrollContentBackground(.hidden)
         .onChange(of: providerID) { _, _ in
             connectionResult = nil
             fetchError = nil
         }
         .sheet(isPresented: $showRemoteModelsSheet) {
-            RemoteModelPickerSheet(
-                providerName: val.displayName,
-                remoteModels: fetchedModels,
-                existingNames: Set(val.models.map { $0.name.trimmingCharacters(in: .whitespaces) })
-            ) { selectedNames in
-                // 若当前只有一个空行，先清掉空行
-                if let i = store.providers.firstIndex(where: { $0.id == providerID }),
-                   store.providers[i].models.count == 1,
-                   store.providers[i].models[0].name.trimmingCharacters(in: .whitespaces).isEmpty {
-                    store.providers[i].models.removeAll()
-                }
-                for name in selectedNames {
-                    store.addModel(providerID: providerID, name: name)
+            CinemaPresentation {
+                RemoteModelPickerSheet(
+                    providerName: val.displayName,
+                    remoteModels: fetchedModels,
+                    existingNames: Set(val.models.map { $0.name.trimmingCharacters(in: .whitespaces) })
+                ) { selectedNames in
+                    // 若当前只有一个空行，先清掉空行
+                    if let i = store.providers.firstIndex(where: { $0.id == providerID }),
+                       store.providers[i].models.count == 1,
+                       store.providers[i].models[0].name.trimmingCharacters(in: .whitespaces).isEmpty {
+                        store.providers[i].models.removeAll()
+                    }
+                    for name in selectedNames {
+                        store.addModel(providerID: providerID, name: name)
+                    }
                 }
             }
         }
@@ -914,11 +906,11 @@ private struct ProviderDetailPane: View {
     private func modelRow(_ modelID: String) -> some View {
         HStack(spacing: 10) {
             TextField("模型 ID / 名称（如 deepseek-chat / qwen-plus）", text: modelBinding(modelID).name)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(CinemaTextFieldStyle())
                 .frame(minWidth: 210, maxWidth: 260)
             ForEach(ModelCapability.allCases) { cap in
                 Toggle(L(cap.label), isOn: capBinding(modelBinding(modelID), cap))
-                    .toggleStyle(.checkbox)
+                    .toggleStyle(CinemaToggleStyle())
                     .font(.caption)
             }
             Spacer(minLength: 4)
@@ -928,7 +920,7 @@ private struct ProviderDetailPane: View {
                 Image(systemName: "minus.circle")
                     .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(CinemaButtonStyle())
             .help("删除该模型")
         }
         .padding(.vertical, 2)
@@ -982,21 +974,17 @@ private struct ProviderPresetPickerSheet: View {
                 }
                 Spacer()
                 TextField("搜索 OpenRouter / OpenCode / 阿里 / 字节 / DeepSeek…", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(CinemaTextFieldStyle())
                     .frame(width: 280)
                 Button("关闭") { dismiss() }
             }
             .padding(16)
 
             // 分类筛选标签条
-            Picker("", selection: $selectedCategory) {
-                Text("全部 (\(ProviderPreset.all.count))").tag("all")
-                ForEach(ProviderCategory.allCases) { cat in
-                    let count = ProviderPreset.all.filter { $0.category == cat }.count
-                    Text("\(L10n.tr(cat.rawValue)) (\(count))").tag(cat.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
+            CinemaTabs(values: ["all"] + ProviderCategory.allCases.map(\.rawValue), selection: $selectedCategory, title: { category in
+                category == "all" ? "全部 (\(ProviderPreset.all.count))" : "\(L10n.tr(category)) (\(ProviderPreset.all.filter { $0.category.rawValue == category }.count))"
+            })
+
             .labelsHidden()
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
@@ -1113,34 +1101,36 @@ private struct RemoteModelPickerSheet: View {
                 }
                 Spacer()
                 TextField("过滤模型 ID…", text: $filter)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(CinemaTextFieldStyle())
                     .frame(width: 220)
             }
             .padding(16)
 
             Divider()
 
-            List(filtered, id: \.self) { id in
-                let alreadyExists = existingNames.contains(id)
-                HStack {
-                    Toggle(isOn: Binding(
-                        get: { alreadyExists || selected.contains(id) },
-                        set: { on in
-                            guard !alreadyExists else { return }
-                            if on { selected.insert(id) } else { selected.remove(id) }
+            CinemaList {
+                ForEach(filtered, id: \.self) { id in
+                    let alreadyExists = existingNames.contains(id)
+                    HStack {
+                        Toggle(isOn: Binding(
+                            get: { alreadyExists || selected.contains(id) },
+                            set: { on in
+                                guard !alreadyExists else { return }
+                                if on { selected.insert(id) } else { selected.remove(id) }
+                            }
+                        )) {
+                            Text(id)
+                                .font(.system(.callout, design: .monospaced))
                         }
-                    )) {
-                        Text(id)
-                            .font(.system(.callout, design: .monospaced))
-                    }
-                    .toggleStyle(.checkbox)
-                    .disabled(alreadyExists)
+                        .toggleStyle(CinemaToggleStyle())
+                        .disabled(alreadyExists)
 
-                    Spacer()
-                    if alreadyExists {
-                        Text("已添加")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        Spacer()
+                        if alreadyExists {
+                            Text("已添加")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
@@ -1157,7 +1147,7 @@ private struct RemoteModelPickerSheet: View {
                     onAdd(Array(selected).sorted())
                     dismiss()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(CinemaButtonStyle(prominent: true))
                 .disabled(selected.isEmpty)
             }
             .padding(14)
@@ -1188,19 +1178,12 @@ private struct AssignTab: View {
     ]
 
     var body: some View {
-        Form {
-            Section {
+        CinemaForm {
+            CinemaSection {
                 ForEach(needs) { n in
                     LabeledContent(L(n.step.label)) {
                         VStack(alignment: .trailing, spacing: 2) {
-                            Picker("", selection: binding(n.step)) {
-                                Text("跟随模板").tag("")
-                                ForEach(store.providers.filter(\.enabled)) { pr in
-                                    ForEach(pr.models.filter { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty && $0.capabilities.contains(n.capability) }) { mo in
-                                        Text("\(pr.displayName) · \(mo.name)（\(pr.kind.shortBadge)）").tag("\(pr.id)|\(mo.id)")
-                                    }
-                                }
-                            }
+                            CinemaSelect(n.step.label, selection: binding(n.step), options: modelOptions(for: n))
                             .labelsHidden()
                             .frame(width: 380)
                             Text("需要能力：\(n.capability.label)")
@@ -1215,7 +1198,18 @@ private struct AssignTab: View {
                 Text("能力在「模型提供商」页为每个模型勾选；选「跟随模板」用当前模板内置的引擎与参数。此处的分配优先于模板，且翻译、语义切分、术语提取均已打通 OpenAI / Responses / Anthropic / Gemini 全协议。")
             }
         }
-        .formStyle(.grouped)
+
+        .scrollContentBackground(.hidden)
+    }
+
+    private func modelOptions(for need: StageNeed) -> [CinemaOption<String>] {
+        var result = [CinemaOption("", L10n.tr("跟随模板"))]
+        for provider in store.providers where provider.enabled {
+            for model in provider.models where !model.name.trimmingCharacters(in: .whitespaces).isEmpty && model.capabilities.contains(need.capability) {
+                result.append(CinemaOption("\(provider.id)|\(model.id)", "\(provider.displayName) · \(model.name)（\(provider.kind.shortBadge)）"))
+            }
+        }
+        return result
     }
 
     private func binding(_ step: StepID) -> Binding<String> {

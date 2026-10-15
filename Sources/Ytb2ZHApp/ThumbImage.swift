@@ -1,4 +1,5 @@
 import SwiftUI
+import Shimmer
 import AppKit
 import Ytb2ZHEngines
 
@@ -8,14 +9,16 @@ struct ThumbImage: View {
     let url: String?
     @State private var image: NSImage?
     @State private var failed = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
             if let image {
                 Image(nsImage: image).resizable().aspectRatio(16 / 9, contentMode: .fill)
             } else {
-                Rectangle().fill(.quinary)
-                    .overlay(ProgressView().controlSize(.small).opacity(failed ? 0 : 1))
+                Rectangle().fill(AppTheme.surface)
+                    .overlay(LinearGradient(colors: [.clear, .primary.opacity(0.06), .clear], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .shimmering(active: !failed && !reduceMotion)
                     .overlay {
                         if failed {
                             Image(systemName: "photo").foregroundStyle(.secondary)
@@ -23,7 +26,11 @@ struct ThumbImage: View {
                     }
             }
         }
+        .aspectRatio(16 / 9, contentMode: .fit)
+        .clipped()
         .task(id: url) {
+            image = nil
+            failed = false
             guard let url, !url.isEmpty, let u = URL(string: url) else { failed = true; return }
             if let url = URL(string: url), let cached = ThumbCache.shared.object(forKey: url as NSURL) { image = cached; return }
             let cfg = URLSessionConfiguration.default
@@ -44,8 +51,10 @@ struct ThumbImage: View {
                 guard (resp as? HTTPURLResponse)?.statusCode == 200,
                       let img = NSImage(data: data) else { failed = true; return }
                 if let u = URL(string: url) { ThumbCache.shared.setObject(img, forKey: u as NSURL) }
+                guard !Task.isCancelled else { return }
                 image = img
             } catch {
+                guard !Task.isCancelled else { return }
                 failed = true
             }
         }

@@ -9,14 +9,10 @@ struct EnginePickerRow: View {
     private let registry = EngineAssembly.registry()
 
     var body: some View {
-        Section("引擎（可插拔）") {
+        CinemaSection("引擎（可插拔）") {
             ForEach(registry.offers, id: \.step) { offer in
                 LabeledContent(L(offer.step.label)) {
-                    Picker(L(offer.step.rawValue), selection: binding(for: offer.step)) {
-                        ForEach(offer.descriptors, id: \.id) { d in
-                            Text(d.name).tag(d.id)
-                        }
-                    }
+                    CinemaSelect(offer.step.label, selection: binding(for: offer.step), options: offer.descriptors.map { CinemaOption($0.id, $0.name) })
                     .labelsHidden()
                     .frame(width: 220)
                 }
@@ -47,7 +43,7 @@ struct ParameterPanel: View {
     }
 
     var body: some View {
-        Section("配音音色") {
+        CinemaSection("配音音色") {
             synthEngineParams
             if synthEngineID != "none" {
                 sliderRow("合成语速", value: $profile.synth.rate,
@@ -56,32 +52,19 @@ struct ParameterPanel: View {
             }
         }
 
-        Section("翻译效果") {
+        CinemaSection("翻译效果") {
             LabeledContent("风格") {
-                Picker("", selection: $profile.translate.style) {
-                    ForEach(TranslationStyle.allCases, id: \.self) { s in
-                        Text(L(s.label)).tag(s)
-                    }
-                }
+                CinemaSelect("风格", selection: $profile.translate.style, options: TranslationStyle.allCases.map { CinemaOption($0, L10n.tr($0.label)) })
                 .labelsHidden()
                 .frame(width: 220)
             }
             LabeledContent("质量") {
-                Picker("", selection: $profile.translate.quality) {
-                    ForEach(TranslationQuality.allCases, id: \.self) { q in
-                        Text(L(q.label)).tag(q)
-                    }
-                }
+                CinemaSelect("质量", selection: $profile.translate.quality, options: TranslationQuality.allCases.map { CinemaOption($0, L10n.tr($0.label)) })
                 .labelsHidden()
                 .frame(width: 220)
             }
             LabeledContent("目标语言") {
-                Picker("", selection: $profile.translate.targetLanguage) {
-                    Text("中文").tag("zh")
-                    Text("English").tag("en")
-                    Text("日本語").tag("ja")
-                    Text("한국어").tag("ko")
-                }
+                CinemaSelect("目标语言", selection: $profile.translate.targetLanguage, options: [CinemaOption("zh", L10n.tr("中文")), CinemaOption("en", L10n.tr("English")), CinemaOption("ja", L10n.tr("日本語")), CinemaOption("ko", L10n.tr("한국어"))])
                 .labelsHidden()
                 .frame(width: 220)
             }
@@ -89,7 +72,7 @@ struct ParameterPanel: View {
 
         }
 
-        Section("字幕与声音") {
+        CinemaSection("字幕与声音") {
             Toggle("中英双语字幕", isOn: $profile.compose.bilingualSubtitles)
             if composeEngineID != "sidecar" {
                 Toggle("保留背景音乐（需开启人声分离）", isOn: $profile.compose.keepBGM)
@@ -97,8 +80,8 @@ struct ParameterPanel: View {
             }
         }
 
-        Section {
-            DisclosureGroup(isExpanded: $advancedExpanded) {
+        CinemaSection {
+            CinemaDisclosure(isExpanded: $advancedExpanded) {
                 EnginePickerRow(profile: $profile)
                 groupHeader("处理速度与翻译细节")
                 Toggle("自动扩译（填不满时间窗时扩写）", isOn: $profile.translate.autoExpand)
@@ -162,25 +145,13 @@ struct ParameterPanel: View {
         switch synthEngineID {
         case "edge-tts":
             LabeledContent("Edge TTS 音色") {
-                Picker("", selection: $profile.synth.edgeVoice) {
-                    Text("云希（年轻男声）").tag("zh-CN-YunxiNeural")
-                    Text("晓晓（女声）").tag("zh-CN-XiaoxiaoNeural")
-                    Text("云野（男声）").tag("zh-CN-YunyeNeural")
-                    Text("晓伊（女声）").tag("zh-CN-XiaoyiNeural")
-                }
+                CinemaSelect("Edge TTS 音色", selection: $profile.synth.edgeVoice, options: [CinemaOption("zh-CN-YunxiNeural", L10n.tr("云希（年轻男声）")), CinemaOption("zh-CN-XiaoxiaoNeural", L10n.tr("晓晓（女声）")), CinemaOption("zh-CN-YunyeNeural", L10n.tr("云野（男声）")), CinemaOption("zh-CN-XiaoyiNeural", L10n.tr("晓伊（女声）"))])
                 .labelsHidden()
                 .frame(width: 220)
             }
         case "local-say":
             LabeledContent("本地 say 音色") {
-                Picker("", selection: $profile.synth.localVoice) {
-                    Text("婷婷（经典女声）").tag("Tingting")
-                    Text("波波（增强女声）").tag("Bobo (Enhanced)")
-                    Text("Eddy（男声）").tag("Eddy (中文（中国大陆）)")
-                    Text("Flo（女声）").tag("Flo (中文（中国大陆）)")
-                    Text("Rocko（男声）").tag("Rocko (中文（中国大陆）)")
-                    Text("Shelley（女声）").tag("Shelley (中文（中国大陆）)")
-                }
+                CinemaSelect("本地音色", selection: $profile.synth.localVoice, options: [CinemaOption("Tingting", L10n.tr("婷婷（经典女声）")), CinemaOption("Bobo (Enhanced)", L10n.tr("波波（增强女声）")), CinemaOption("Eddy (中文（中国大陆）)", L10n.tr("Eddy（男声）")), CinemaOption("Flo (中文（中国大陆）)", L10n.tr("Flo（女声）")), CinemaOption("Rocko (中文（中国大陆）)", L10n.tr("Rocko（男声）")), CinemaOption("Shelley (中文（中国大陆）)", L10n.tr("Shelley（女声）"))])
                 .labelsHidden()
                 .frame(width: 220)
                 .help("macOS 系统语音，离线可用；更多音色在系统设置 → 辅助功能 → 朗读内容安装")
@@ -188,7 +159,7 @@ struct ParameterPanel: View {
         case "sherpa-onnx":
             LabeledContent("Sherpa-Onnx 模型目录") {
                 TextField("如 ~/sherpa-onnx/vits-zh-hf-theresa", text: $profile.synth.sherpaOnnxModelDir)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(CinemaTextFieldStyle())
                     .frame(width: 340)
             }
             .help("目录需含 model.onnx、tokens.txt、dict/；二进制自动查找 ~/sherpa-onnx/bin/ 或 PATH。从 github.com/k2-fsa/sherpa-onnx/releases 下载")
@@ -201,14 +172,7 @@ struct ParameterPanel: View {
         default:
             // bailian（默认）：百炼音色 + 并发
             LabeledContent("音色") {
-                Picker("", selection: $profile.synth.voice) {
-                    Text("安明远（沉稳男声）").tag("anmingyuan_v3.1")
-                    Text("火烛时（开朗男声）").tag("huozhuoshi_v3.1")
-                    Text("龙三叔（东北男声）").tag("longsanshu_v3.1")
-                    Text("许言初（儒雅男声）").tag("xuyanchu_v3.1")
-                    Text("于晓云（知性女声）").tag("yuxiaoyun_v3.1")
-                    Text("清歌（温柔女声）").tag("qingge_v3.2")
-                }
+                CinemaSelect("音色", selection: $profile.synth.voice, options: [CinemaOption("anmingyuan_v3.1", L10n.tr("安明远（沉稳男声）")), CinemaOption("huozhuoshi_v3.1", L10n.tr("火烛时（开朗男声）")), CinemaOption("longsanshu_v3.1", L10n.tr("龙三叔（东北男声）")), CinemaOption("xuyanchu_v3.1", L10n.tr("许言初（儒雅男声）")), CinemaOption("yuxiaoyun_v3.1", L10n.tr("于晓云（知性女声）")), CinemaOption("qingge_v3.2", L10n.tr("清歌（温柔女声）"))])
                 .labelsHidden()
                 .frame(width: 220)
             }
@@ -230,7 +194,8 @@ struct ParameterPanel: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(label).frame(width: 110, alignment: .leading)
-                Slider(value: value, in: range, step: step)
+                CinemaSlider(value: value, range: range, step: step)
+                    .accessibilityLabel(label)
                     .frame(maxWidth: 420)
                 Text(String(format: "%.2f", value.wrappedValue))
                     .font(.system(.body, design: .monospaced))
@@ -247,8 +212,13 @@ struct ParameterPanel: View {
     private func stepperRow(_ label: String, value: Binding<Int>, in range: ClosedRange<Int>, hint: String) -> some View {
         HStack {
             Text(label).frame(width: 110, alignment: .leading)
-            Stepper("\(value.wrappedValue)", value: value, in: range)
-                .frame(maxWidth: 260, alignment: .leading)
+            HStack(spacing: 12) {
+                Button { value.wrappedValue = max(range.lowerBound, value.wrappedValue - 1) } label: { Image(systemName: "minus") }
+                    .disabled(value.wrappedValue <= range.lowerBound).accessibilityLabel("减少 " + label)
+                Text("\(value.wrappedValue)").monospacedDigit().frame(minWidth: 28)
+                Button { value.wrappedValue = min(range.upperBound, value.wrappedValue + 1) } label: { Image(systemName: "plus") }
+                    .disabled(value.wrappedValue >= range.upperBound).accessibilityLabel("增加 " + label)
+            }.frame(maxWidth: 260, alignment: .leading)
             if !hint.isEmpty {
                 Text(hint).font(.caption2).foregroundStyle(.secondary)
             }

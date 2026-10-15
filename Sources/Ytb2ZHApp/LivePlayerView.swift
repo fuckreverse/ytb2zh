@@ -66,16 +66,14 @@ struct LivePlayerView: View {
                     Button(action: openEntry) {
                         Label(session.isRunning ? "停止处理" : "开始", systemImage: session.isRunning ? "stop.fill" : "arrow.right")
                     }
-                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .buttonStyle(CinemaButtonStyle(prominent: true))
                     .disabled(!session.isRunning && (url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || searching || session.converting || session.downloadingOriginal))
                 }
                 .padding(14).background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.08)))
                 HStack {
-                    Picker("播放模式", selection: $originalMode) {
-                        Text("中文译配").tag(false)
-                        Text("原声播放").tag(true)
-                    }.pickerStyle(.segmented).frame(width: 230)
+                    CinemaTabs(values: [false, true], selection: $originalMode,
+                               title: { $0 ? "原声播放" : "中文译配" })
                     Text(originalMode ? "先看原片，随时切换中文配音" : "边处理边播放，生成中文字幕与配音")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
@@ -90,7 +88,7 @@ struct LivePlayerView: View {
                     .padding(.horizontal, 16)
             }
             if !hint.isEmpty {
-                Text(hint).font(.caption).foregroundStyle(.blue).frame(maxWidth: .infinity, alignment: .leading)
+                Text(hint).font(.caption).foregroundStyle(AppTheme.accent).frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
             }
 
@@ -114,6 +112,8 @@ struct LivePlayerView: View {
             if let player = session.player {
                 PlayerSurface(player: player)
                     .aspectRatio(16 / 9, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .padding(.horizontal, 24)
                     .frame(maxWidth: .infinity)
             } else {
                 if session.isRunning || session.downloadingOriginal {
@@ -128,15 +128,15 @@ struct LivePlayerView: View {
                         .background(AppTheme.surface, in: RoundedRectangle(cornerRadius: 20))
                         .padding(.horizontal, 24)
                 } else {
-                    AppEmptyState(icon: "play.tv", title: "从一个视频开始", message: "选择中文译配或原声播放，在上方输入链接。也可以输入关键词，发现感兴趣的视频。", actionTitle: "粘贴视频链接") {
+                    CinemaWelcome {
                         if let value = NSPasteboard.general.string(forType: .string) { url = value }
                         entryFocused = true
-                    }.frame(minHeight: 260)
+                    }.padding(.horizontal, 24)
                 }
                 if !recent.items.isEmpty {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack {
-                            Text("最近完成").font(.headline)
+                            Text("继续探索你的收藏").font(.system(size: 21, weight: .bold))
                             Spacer()
                             Button("查看媒体库") { navigate(to: .library) }.buttonStyle(.plain)
                         }
@@ -248,7 +248,7 @@ struct LivePlayerView: View {
                 Label(session.mode == .original ? "原声中" : "原声",
                       systemImage: session.mode == .original ? "waveform" : "waveform.circle")
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(CinemaButtonStyle())
             .tint(session.mode == .original ? .accentColor : .secondary)
             .disabled(session.mode == .original || session.sourceURL == nil)
             .help("切换回原片原声（中文版继续在后台处理缓存）")
@@ -265,7 +265,7 @@ struct LivePlayerView: View {
                     Label(session.converting ? "切换中文配音（处理中）" : "切换中文配音",
                           systemImage: "character.bubble")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(CinemaButtonStyle())
                 .tint(.green)
                 .help("中文版分片已就绪，从当前观看位置无缝续看")
             } else if session.converting {
@@ -277,8 +277,8 @@ struct LivePlayerView: View {
                 } label: {
                     Label("转中文配音", systemImage: "character.bubble")
                 }
-                .buttonStyle(.bordered)
-                .tint(.blue)
+                .buttonStyle(CinemaButtonStyle())
+                .tint(AppTheme.accent)
                 .disabled(session.downloadingOriginal)
                 .help("后台开始转译配音（原声不中断，处理约 4x 实时），就绪后这里会变成「切换中文配音」")
             }
@@ -300,7 +300,7 @@ struct LivePlayerView: View {
                 Label(LiveSession.rateLabel(session.playbackRate), systemImage: "speedometer")
                     .fixedSize()
             }
-            .menuStyle(.borderedButton)
+            .menuStyle(CinemaMenuStyle())
             .menuIndicator(.visible)
             .fixedSize()
             .help("播放倍速（对原声/中文配音均生效）")

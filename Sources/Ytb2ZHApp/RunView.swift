@@ -142,7 +142,7 @@ private struct RunBarContent: View {
                 } label: {
                     Label("开始转换", systemImage: "play.fill")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(CinemaButtonStyle(prominent: true))
                 .disabled(disabled)
                 .help(disabledHint)
                 .keyboardShortcut(.return, modifiers: .command)
@@ -156,7 +156,7 @@ private struct RunBarContent: View {
                 } label: {
                     Label("先翻译并审核", systemImage: "text.badge.checkmark")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(CinemaButtonStyle())
                 .disabled(disabled)
                 .help("只跑到「翻译」就停下：下载→转录→切分→术语→翻译，不出成片。跑到翻译后到任务中心打开「审核译文」，人工确认/修改后点「保存并继续转换」再出片")
 
@@ -169,7 +169,7 @@ private struct RunBarContent: View {
                 } label: {
                     Label("试转前3分钟", systemImage: "gauge.with.needle")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(CinemaButtonStyle())
                 .disabled(disabled)
                 .help("试转模式：新开独立任务，下载/转录/翻译/配音/成片全流程只跑前 3 分钟，快速验证配置。小样没问题后，再用「开始转换」跑全片（全片是新任务，互不影响）")
 

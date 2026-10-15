@@ -158,7 +158,7 @@ struct JobCenterView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List {
+                CinemaList {
                     ForEach(filtered) { item in
                         JobRow(item: item,
                                onResume: { resume(item.id) },
@@ -170,7 +170,7 @@ struct JobCenterView: View {
                             .onTapGesture { detail = item.id }
                     }
                 }
-                .listStyle(.inset)
+
             }
         }
         .background(AppTheme.canvas)
@@ -180,19 +180,25 @@ struct JobCenterView: View {
         .sheet(item: Binding(
             get: { editingUnits.map { JobRef(id: $0) } },
             set: { editingUnits = $0?.id })) { ref in
-            UnitsEditorView(jobID: ref.id) { reload() }
+            CinemaPresentation {
+                UnitsEditorView(jobID: ref.id) { reload() }
+            }
         }
         .sheet(item: Binding(
             get: { editingTerms.map { JobRef(id: $0) } },
             set: { editingTerms = $0?.id })) { ref in
-            TerminologyEditorView(jobID: ref.id) { reload() }
+            CinemaPresentation {
+                TerminologyEditorView(jobID: ref.id) { reload() }
+            }
         }
         .sheet(item: Binding(
             get: { detail.map { JobRef(id: $0) } },
             set: { detail = $0?.id })) { ref in
-            JobDetailView(jobID: ref.id, job: job,
-                          onEditUnits: { editingUnits = ref.id },
-                          onEditTerms: { editingTerms = ref.id })
+            CinemaPresentation {
+                JobDetailView(jobID: ref.id, job: job,
+                              onEditUnits: { editingUnits = ref.id },
+                              onEditTerms: { editingTerms = ref.id })
+            }
         }
     }
 
@@ -213,20 +219,16 @@ struct JobCenterView: View {
             }
             Spacer()
             Button { navigate(to: .settings) } label: { Label("新建转换", systemImage: "plus") }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(CinemaButtonStyle(prominent: true))
             }
             HStack(spacing: 12) {
-            Picker("", selection: $filterRaw) {
-                ForEach(JobStatusFilter.allCases) { f in
-                    Text(L(f.label)).tag(f.rawValue)
-                }
-            }
-            .pickerStyle(.segmented)
+            CinemaTabs(values: JobStatusFilter.allCases.map(\.rawValue), selection: $filterRaw, title: { value in JobStatusFilter.allCases.first(where: { $0.rawValue == value }).map { L10n.tr($0.label) } ?? value })
+
             .labelsHidden()
-            .frame(width: 290)
+
             .help("按任务状态筛选")
             TextField("搜索标题 / 频道 / 链接", text: $searchText)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(CinemaTextFieldStyle())
                 .frame(width: 200)
             Button {
                 model.backfillReset()
@@ -382,7 +384,7 @@ struct UnitsEditorView: View {
                 Spacer()
                 Text("voice 留空 = 默认音色").font(.caption).foregroundStyle(.secondary)
             }.padding(12)
-            List {
+            CinemaList {
                 ForEach(units.indices, id: \.self) { i in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(String(format: "#%d  [%.1fs-%.1fs] %@", i, units[i].start, units[i].end, units[i].en))
@@ -391,11 +393,11 @@ struct UnitsEditorView: View {
                             TextField("中文译文", text: Binding(
                                 get: { units.indices.contains(i) ? units[i].zh : "" },
                                 set: { if units.indices.contains(i) { units[i].zh = $0 } }))
-                                .textFieldStyle(.roundedBorder)
+                                .textFieldStyle(CinemaTextFieldStyle())
                             TextField("voice", text: Binding(
                                 get: { units.indices.contains(i) ? (units[i].voice ?? "") : "" },
                                 set: { if units.indices.contains(i) { units[i].voice = $0.isEmpty ? nil : $0 } }))
-                                .textFieldStyle(.roundedBorder)
+                                .textFieldStyle(CinemaTextFieldStyle())
                                 .frame(width: 150)
                         }
                     }
@@ -403,7 +405,7 @@ struct UnitsEditorView: View {
                 }
             }
             if !message.isEmpty {
-                Text(message).font(.caption).foregroundStyle(.blue).padding(.horizontal, 12)
+                Text(message).font(.caption).foregroundStyle(AppTheme.accent).padding(.horizontal, 12)
             }
             HStack {
                 Button("取消") { dismiss() }
@@ -417,7 +419,7 @@ struct UnitsEditorView: View {
                         name: .ytb2zhResumeJob, object: ResumeRequest(jobID: jobID, from: .synthesize))
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(CinemaButtonStyle(prominent: true))
                 .help("使用当前译文（含人工修改）直接合成配音、调度、出成片；不再重新翻译")
                 // 次路径：改完术语想整体重翻
                 Button("保存并重新翻译") {
@@ -478,7 +480,7 @@ struct TerminologyEditorView: View {
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
-            List {
+            CinemaList {
                 ForEach(terms.indices, id: \.self) { i in
                     HStack {
                         TextField("EN", text: Binding(
@@ -513,7 +515,7 @@ struct TerminologyEditorView: View {
             }
             .padding(.horizontal, 12)
             if !message.isEmpty {
-                Text(message).font(.caption).foregroundStyle(.blue).padding(.horizontal, 12)
+                Text(message).font(.caption).foregroundStyle(AppTheme.accent).padding(.horizontal, 12)
             }
             HStack {
                 Button("取消") { dismiss() }
@@ -532,7 +534,7 @@ struct TerminologyEditorView: View {
                     }
                 }
                 .keyboardShortcut(.return)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(CinemaButtonStyle(prominent: true))
             }
             .padding(12)
         }
