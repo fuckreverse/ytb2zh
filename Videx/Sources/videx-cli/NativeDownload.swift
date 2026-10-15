@@ -10,29 +10,38 @@ extension VidexCLI {
         for (group, selection) in selections.enumerated() {
             let work = directory.appendingPathComponent(".\(info.id)-\(group)")
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
-            var inputs: [URL] = []
-            for (index, format) in selection.formats.enumerated() {
-                let input = work.appendingPathComponent("\(index).\(format.container ?? "mp4")")
-                let refresh: @Sendable () async throws -> MediaFormat = {
-                    let fresh = try await registry.extract(url: url, options: options)
-                    guard let result = fresh.formats.first(where: { $0.formatID == format.formatID && $0.audioTrackID == format.audioTrackID }) else {
-                        throw ExtractionError.notExtractable(site: "youtube", reason: "刷新后原格式不可用")
+            let indexedInputs: [(Int, URL)] = try await withThrowingTaskGroup(of: (Int, URL).self) { taskGroup in
+                for (index, format) in selection.formats.enumerated() {
+                    let input = work.appendingPathComponent("\(index).\(format.container ?? "mp4")")
+                    let refresh: @Sendable () async throws -> MediaFormat = {
+                        let fresh = try await registry.extract(url: url, options: options)
+                        guard let result = fresh.formats.first(where: { $0.formatID == format.formatID && $0.audioTrackID == format.audioTrackID }) else {
+                            throw ExtractionError.notExtractable(site: "youtube", reason: "刷新后原格式不可用")
+                        }
+                        return result
                     }
-                    return result
+                    taskGroup.addTask {
+                        let http = URLSessionHTTPClient(proxy: options.proxy)
+                        if format.protocolType == .sabr {
+                            _ = try await SABRDownloader.download(format: format, to: input, http: http,
+                                options: SABRDownloadOptions(startSeconds: start, durationSeconds: duration, liveFromStart: liveFromStart), refresh: refresh)
+                        } else if format.protocolType == .hls {
+                            _ = try await NativeHLSDownloader.download(format: format, to: input, http: http,
+                                refresh: refresh, durationSeconds: duration.map { $0 + start }, liveFromStart: liveFromStart)
+                        } else {
+                            _ = try await NativeMediaDownloader.download(format: format, to: input, http: http,
+                                refresh: refresh, partialSeconds: duration.map { $0 + start }, liveFromStart: liveFromStart)
+                        }
+                        return (index, input)
+                    }
                 }
-                let http = URLSessionHTTPClient(proxy: options.proxy)
-                if format.protocolType == .sabr {
-                    _ = try await SABRDownloader.download(format: format, to: input, http: http,
-                        options: SABRDownloadOptions(startSeconds: start, durationSeconds: duration, liveFromStart: liveFromStart), refresh: refresh)
-                } else if format.protocolType == .hls {
-                    _ = try await NativeHLSDownloader.download(format: format, to: input, http: http,
-                        refresh: refresh, durationSeconds: duration.map { $0 + start }, liveFromStart: liveFromStart)
-                } else {
-                    _ = try await NativeMediaDownloader.download(format: format, to: input, http: http,
-                        refresh: refresh, partialSeconds: duration.map { $0 + start }, liveFromStart: liveFromStart)
+                var collected: [(Int, URL)] = []
+                for try await pair in taskGroup {
+                    collected.append(pair)
                 }
-                inputs.append(input)
+                return collected.sorted { $0.0 < $1.0 }
             }
+            let inputs = indexedInputs.map(\.1)
             // Existing ffmpeg is used only as a container muxer; extraction/streaming remain Swift/JSC.
             let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { String($0) + "/ffmpeg" }
             guard let executable = paths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {

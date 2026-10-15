@@ -63,4 +63,92 @@ final class VidexBridgeTests: XCTestCase {
         XCTAssertEqual(Set(VidexBridge.webFamilyClientKeys), ["web", "web_safari", "web_embedded", "mweb", "tv_samsung", "tv_downgraded", "tv_simply"])
         XCTAssertFalse(VidexBridge.webFamilyClientKeys.contains("visionos"), "免 POT 客户端无需注入")
     }
+
+    func testModelStoreAndYtDlpInstallerShareResumableDownloader() async throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("unified-dl-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+
+        let totalSize = 2 * 1024 * 1024 + 512 // > 2MB (3 chunks of 1MB)
+        let payload = Data((0..<totalSize).map { UInt8($0 & 0xFF) })
+
+        // 1) ModelStore.download 断网续传校验
+        let modelDest = dir.appendingPathComponent("ggml-test.bin")
+        let modelHTTP1 = MockRangeServer(payload: payload, failRange: "bytes=1048576-2097151")
+        do {
+            try await ModelStore.download(
+                url: "https://example.com/ggml-test.bin",
+                to: modelDest.path,
+                proxy: "",
+                label: "测试模型",
+                http: modelHTTP1
+            ) { _, _ in }
+            XCTFail("首轮模型下载应在中断点抛错")
+        } catch {}
+        XCTAssertTrue(fm.fileExists(atPath: modelDest.path + ".part"), "中断后应保留 .part 文件")
+        XCTAssertTrue(fm.fileExists(atPath: modelDest.path + ".state.json"), "中断后应保留 .state.json 检查点")
+
+        let modelHTTP2 = MockRangeServer(payload: payload, failRange: nil)
+        try await ModelStore.download(
+            url: "https://example.com/ggml-test.bin",
+            to: modelDest.path,
+            proxy: "",
+            label: "测试模型",
+            http: modelHTTP2
+        ) { _, _ in }
+        XCTAssertEqual(try Data(contentsOf: modelDest), payload)
+        let resumedRanges = await modelHTTP2.requestedRanges
+        XCTAssertFalse(resumedRanges.contains("bytes=0-1048575"), "ModelStore 续传不应重新下载已完成的首个 1MB 分块")
+
+        // 2) YtDlpInstaller.install 断网续传与可执行权限校验
+        let binDest = dir.appendingPathComponent("yt-dlp_macos")
+        let binHTTP1 = MockRangeServer(payload: payload, failRange: "bytes=1048576-2097151")
+        do {
+            _ = try await YtDlpInstaller.install(to: binDest.path, http: binHTTP1, minimumBytes: 1_000_000)
+            XCTFail("首轮 yt-dlp 安装应在中断点抛错")
+        } catch {}
+        XCTAssertFalse(fm.fileExists(atPath: binDest.path), "中断时不应留下半截目标二进制")
+        XCTAssertTrue(fm.fileExists(atPath: binDest.path + ".staging.part"), "中断时应保留 staging.part 供续传")
+
+        let binHTTP2 = MockRangeServer(payload: payload, failRange: nil)
+        let installedPath = try await YtDlpInstaller.install(to: binDest.path, http: binHTTP2, minimumBytes: 1_000_000)
+        XCTAssertEqual(installedPath, binDest.path)
+        XCTAssertTrue(fm.isExecutableFile(atPath: binDest.path), "安装完成后应具备可执行权限")
+        XCTAssertEqual(try Data(contentsOf: binDest), payload)
+        let binResumedRanges = await binHTTP2.requestedRanges
+        XCTAssertFalse(binResumedRanges.contains("bytes=0-1048575"), "YtDlpInstaller 续传不应重复下载首块")
+    }
+}
+
+private actor MockRangeServer: HTTPFetching {
+    let payload: Data
+    let failRange: String?
+    var requestedRanges: [String] = []
+
+    init(payload: Data, failRange: String?) {
+        self.payload = payload
+        self.failRange = failRange
+    }
+
+    func fetch(_ request: HTTPRequest) async throws -> HTTPResponse {
+        guard let rangeHeader = request.headers["Range"], rangeHeader.hasPrefix("bytes=") else {
+            return HTTPResponse(status: 200, headers: ["ETag": "\"m1\""], body: payload)
+        }
+        requestedRanges.append(rangeHeader)
+        if rangeHeader == failRange {
+            throw ExtractionError.network("simulated network drop")
+        }
+        let parts = rangeHeader.dropFirst("bytes=".count).split(separator: "-").compactMap { Int($0) }
+        let start = parts[0]
+        let end = min(payload.count - 1, parts[1])
+        return HTTPResponse(
+            status: 206,
+            headers: [
+                "Content-Range": "bytes \(start)-\(end)/\(payload.count)",
+                "ETag": "\"m1\"",
+            ],
+            body: Data(payload[start...end])
+        )
+    }
 }

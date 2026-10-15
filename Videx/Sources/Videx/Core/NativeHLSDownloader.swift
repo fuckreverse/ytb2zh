@@ -100,9 +100,17 @@ public enum NativeHLSDownloader {
         return output.prefix(length)
     }
 
+    struct PlannedSegment: Sendable {
+        var index: Int
+        var segment: Segment
+        var fetchInitialization: MediaFragment?
+        var nextInitializationIdentity: String?
+    }
+
     public static func download(format initial: MediaFormat, to target: URL, http: HTTPFetching,
                                 refresh: (@Sendable () async throws -> MediaFormat)? = nil,
                                 durationSeconds: Double? = nil, liveFromStart: Bool = false,
+                                concurrency: Int = 4,
                                 progress: @Sendable (Double, String?) -> Void = { _,_ in }) async throws -> URL {
         let partial = target.appendingPathExtension("part"), stateURL = target.appendingPathExtension("hls-state.json")
         let fm = FileManager.default
@@ -118,8 +126,9 @@ public enum NativeHLSDownloader {
         try file.truncate(atOffset: state.bytes); try file.seek(toOffset:state.bytes)
         var format = initial, refreshes = 0, idle = 0, keys: [URL:Data] = [:]
         let client = RetryingHTTPClient(base:http)
-        func get(_ url: URL, range: String? = nil) async throws -> HTTPResponse {
-            var headers = format.requestHeaders ?? [:]
+        let effectiveConcurrency = max(1, concurrency)
+        @Sendable func get(_ url: URL, headers baseHeaders: [String: String], range: String? = nil) async throws -> HTTPResponse {
+            var headers = baseHeaders
             if let range { headers["Range"] = "bytes=" + range }
             let response = try await client.fetch(.get(url,headers:headers))
             guard response.isOK else { throw ExtractionError.siteError(site:"hls",code:response.status,reason:"HLS 请求失败") }
@@ -133,38 +142,93 @@ public enum NativeHLSDownloader {
             try Task.checkCancellation()
             let before = state.lastSequence
             do {
-                let response = try await get(format.url)
+                let reqHeaders = format.requestHeaders ?? [:]
+                let response = try await get(format.url, headers: reqHeaders)
                 let playlist = try parse(response.text,base:response.finalURL ?? format.url)
                 var segments=playlist.segments
                 if state.lastSequence==nil && !playlist.endList && !liveFromStart { segments=Array(segments.suffix(3)) }
+
+                var batch: [PlannedSegment] = []
+                var expectedPrevSeq = state.lastSequence
+                var projectedDuration = state.duration
+                var runningInitIdentity = state.initializationIdentity
                 for segment in segments where state.lastSequence==nil || segment.sequence > state.lastSequence! {
-                    if let last=state.lastSequence,segment.sequence != last+1 { throw ExtractionError.parse("直播 DVR 分片已丢失，保留文件并停止，避免静默漏帧") }
-                    if let limit=durationSeconds,state.duration >= limit { break }
-                    var bytes=Data()
-                    var nextInitialization = state.initializationIdentity
-                    if let initialization=segment.initialization {
-                        let identity=initialization.url.path + (initialization.byteRange ?? "")
-                        if state.initializationIdentity != identity {
-                            bytes += try await get(initialization.url,range:initialization.byteRange).body
-                            nextInitialization=identity
+                    if let last=expectedPrevSeq,segment.sequence != last+1 { throw ExtractionError.parse("直播 DVR 分片已丢失，保留文件并停止，避免静默漏帧") }
+                    if let limit=durationSeconds,projectedDuration >= limit { break }
+                    var fetchInit: MediaFragment?
+                    var nextInit = runningInitIdentity
+                    if let initialization = segment.initialization {
+                        let identity = initialization.url.path + (initialization.byteRange ?? "")
+                        if runningInitIdentity != identity {
+                            fetchInit = initialization
+                            runningInitIdentity = identity
+                        }
+                        nextInit = runningInitIdentity
+                    }
+                    batch.append(PlannedSegment(
+                        index: batch.count,
+                        segment: segment,
+                        fetchInitialization: fetchInit,
+                        nextInitializationIdentity: nextInit
+                    ))
+                    expectedPrevSeq = segment.sequence
+                    projectedDuration += segment.duration
+                }
+
+                for item in batch {
+                    if let keyURL = item.segment.key, keys[keyURL] == nil {
+                        keys[keyURL] = try await get(keyURL, headers: reqHeaders).body
+                    }
+                }
+
+                if !batch.isEmpty {
+                    let coordinator = HLSBatchCoordinator(
+                        batch: batch,
+                        headers: reqHeaders,
+                        keys: keys,
+                        state: state,
+                        file: file,
+                        stateURL: stateURL,
+                        durationSeconds: durationSeconds,
+                        get: get
+                    )
+                    let workers = min(effectiveConcurrency, batch.count)
+                    if workers <= 1 {
+                        do {
+                            while let step = try await coordinator.stepOne() {
+                                if let (frac, msg) = step { progress(frac, msg) }
+                            }
+                            state = await coordinator.currentState()
+                        } catch {
+                            state = await coordinator.currentState()
+                            throw error
+                        }
+                    } else {
+                        do {
+                            try await withThrowingTaskGroup(of: (Double, String)?.self) { group in
+                                var launched = 0
+                                for _ in 0..<workers {
+                                    launched += 1
+                                    group.addTask { try await coordinator.stepOne() ?? nil }
+                                }
+                                while let completed = try await group.next() {
+                                    if let (frac, msg) = completed {
+                                        progress(frac, msg)
+                                    }
+                                    if launched < batch.count {
+                                        launched += 1
+                                        group.addTask { try await coordinator.stepOne() ?? nil }
+                                    }
+                                }
+                            }
+                            state = await coordinator.currentState()
+                        } catch {
+                            state = await coordinator.currentState()
+                            throw error
                         }
                     }
-                    var media=try await get(segment.url,range:segment.range).body
-                    if let keyURL=segment.key {
-                        if keys[keyURL]==nil { keys[keyURL]=try await get(keyURL).body }
-                        var sequenceIV=Data(repeating:0,count:16)
-                        let n=UInt64(max(0,segment.sequence))
-                        for i in 0..<8 { sequenceIV[15-i]=UInt8((n >> (i*8)) & 255) }
-                        media=try decrypt(media,key:keys[keyURL]!,iv:segment.iv ?? sequenceIV)
-                    }
-                    bytes += media
-                    guard !bytes.isEmpty else { throw ExtractionError.parse("HLS 分片没有数据") }
-                    try file.write(contentsOf:bytes);state.bytes+=UInt64(bytes.count)
-                    state.lastSequence=segment.sequence;state.duration+=segment.duration
-                    state.initializationIdentity = nextInitialization
-                    try file.synchronize();try JSONEncoder().encode(state).write(to:stateURL,options:.atomic)
-                    progress(durationSeconds.map{min(1,state.duration/max(0.001,$0))} ?? 0,"HLS \(state.duration.rounded()) 秒")
                 }
+
                 if playlist.endList || durationSeconds.map({state.duration >= $0}) == true { break }
                 idle=before==state.lastSequence ? idle+1 : 0
                 if idle>120 { throw ExtractionError.network("直播长时间无新分片，已保留续传状态") }
@@ -185,5 +249,90 @@ public enum NativeHLSDownloader {
         try fm.moveItem(at:partial,to:target);try? fm.removeItem(at:stateURL)
         progress(1,"HLS 下载完成")
         return target
+    }
+}
+
+private actor HLSBatchCoordinator {
+    let batch: [NativeHLSDownloader.PlannedSegment]
+    let headers: [String: String]
+    let keys: [URL: Data]
+    var state: NativeHLSDownloader.Checkpoint
+    let file: FileHandle
+    let stateURL: URL
+    let durationSeconds: Double?
+    let get: @Sendable (URL, [String: String], String?) async throws -> HTTPResponse
+
+    var nextToDispatch = 0
+    var nextToCommit = 0
+    var buffered: [Int: (NativeHLSDownloader.PlannedSegment, Data)] = [:]
+
+    init(
+        batch: [NativeHLSDownloader.PlannedSegment],
+        headers: [String: String],
+        keys: [URL: Data],
+        state: NativeHLSDownloader.Checkpoint,
+        file: FileHandle,
+        stateURL: URL,
+        durationSeconds: Double?,
+        get: @escaping @Sendable (URL, [String: String], String?) async throws -> HTTPResponse
+    ) {
+        self.batch = batch
+        self.headers = headers
+        self.keys = keys
+        self.state = state
+        self.file = file
+        self.stateURL = stateURL
+        self.durationSeconds = durationSeconds
+        self.get = get
+    }
+
+    func currentState() -> NativeHLSDownloader.Checkpoint { state }
+
+    private func popAndFetch() async throws -> (NativeHLSDownloader.PlannedSegment, Data, Data)? {
+        guard nextToDispatch < batch.count else { return nil }
+        let item = batch[nextToDispatch]
+        nextToDispatch += 1
+        var initBytes = Data()
+        if let initialization = item.fetchInitialization {
+            initBytes = try await get(initialization.url, headers, initialization.byteRange).body
+        }
+        let mediaBytes = try await get(item.segment.url, headers, item.segment.range).body
+        return (item, initBytes, mediaBytes)
+    }
+
+    private func commit(item: NativeHLSDownloader.PlannedSegment, bytes: Data) throws -> (Double, String)? {
+        buffered[item.index] = (item, bytes)
+        var lastUpdate: (Double, String)?
+        while let (nextItem, nextBytes) = buffered.removeValue(forKey: nextToCommit) {
+            try file.seek(toOffset: state.bytes)
+            try file.write(contentsOf: nextBytes)
+            state.bytes += UInt64(nextBytes.count)
+            state.lastSequence = nextItem.segment.sequence
+            state.duration += nextItem.segment.duration
+            state.initializationIdentity = nextItem.nextInitializationIdentity
+            nextToCommit += 1
+            try file.synchronize()
+            try JSONEncoder().encode(state).write(to: stateURL, options: .atomic)
+            lastUpdate = (
+                durationSeconds.map { min(1, state.duration / max(0.001, $0)) } ?? 0,
+                "HLS \(state.duration.rounded()) 秒"
+            )
+        }
+        return lastUpdate
+    }
+
+    func stepOne() async throws -> (Double, String)?? {
+        try Task.checkCancellation()
+        guard let (item, initBytes, rawMedia) = try await popAndFetch() else { return nil }
+        var media = rawMedia
+        if let keyURL = item.segment.key, let keyData = keys[keyURL] {
+            var sequenceIV = Data(repeating: 0, count: 16)
+            let n = UInt64(max(0, item.segment.sequence))
+            for i in 0..<8 { sequenceIV[15 - i] = UInt8((n >> (i * 8)) & 255) }
+            media = try NativeHLSDownloader.decrypt(media, key: keyData, iv: item.segment.iv ?? sequenceIV)
+        }
+        let combined = initBytes + media
+        guard !combined.isEmpty else { throw ExtractionError.parse("HLS 分片没有数据") }
+        return .some(try commit(item: item, bytes: combined))
     }
 }

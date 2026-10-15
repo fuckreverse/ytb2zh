@@ -42,6 +42,7 @@ enum NativeDASHLiveDownloader {
     }
     static func download(format: MediaFormat, to target: URL, http: HTTPFetching,
                          duration: Double?, liveFromStart: Bool, refresh: (@Sendable () async throws -> MediaFormat)? = nil,
+                         concurrency: Int = 4,
                          progress: @Sendable(Double,String?)->Void) async throws -> URL {
         guard let manifest = format.manifestURL, let representationID = format.representationID else { throw ExtractionError.parse("直播 DASH 配置缺失") }
         let adapter = Adapter(base: http, manifest: manifest, representationID: representationID)
@@ -60,6 +61,6 @@ enum NativeDASHLiveDownloader {
         } else { reload = nil }
         return try await NativeHLSDownloader.download(format: initial, to: target,
             http: adapter, refresh: reload, durationSeconds: duration,
-            liveFromStart: liveFromStart, progress: progress)
+            liveFromStart: liveFromStart, concurrency: concurrency, progress: progress)
     }
 }

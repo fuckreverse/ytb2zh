@@ -276,26 +276,50 @@ public final class VidexDownloadEngine: DownloadEngine, @unchecked Sendable {
         try fm.createDirectory(at: work, withIntermediateDirectories: true)
         var outputs: [URL] = []
         for (selectionIndex, selection) in selections.enumerated() {
-            var inputs: [(MediaFormat, URL)] = []
-            for (index, format) in selection.formats.enumerated() {
-                let component = format.formatID.replacingOccurrences(of: #"[^A-Za-z0-9._-]"#, with: "_", options: .regularExpression)
-                let local = work.appendingPathComponent("\(selectionIndex)-\(index)-\(component).\(format.container ?? "mp4")")
-                let refresh: @Sendable () async throws -> MediaFormat = {
-                    let updated = try await VidexBridge.extract(url, proxy: resolvedProxy, refreshPoToken: true)
-                    guard let match = updated.formats.first(where: {
-                        $0.formatID == format.formatID && $0.protocolType == format.protocolType
-                            && $0.audioTrackID == format.audioTrackID && $0.isDRC == format.isDRC
-                    }) else { throw EngineError.engineFailure("媒体地址刷新后原格式不可用") }
-                    return match
+            let formatCount = max(1, selection.formats.count)
+            let trackFractions = Mutex(Array(repeating: 0.0, count: formatCount))
+            let referer = ["tiktok", "douyin"].contains(info.extractorID) ? info.webpageURL.absoluteString : nil
+            let partialSeconds = options.partialSeconds
+            let startSeconds = options.startSeconds
+            let durationSeconds = options.durationSeconds
+            let liveFromStart = options.liveFromStart
+            let rateLimit = options.rateLimitBytesPerSecond
+
+            let indexedInputs: [(Int, MediaFormat, URL)] = try await withThrowingTaskGroup(of: (Int, MediaFormat, URL).self) { group in
+                for (index, format) in selection.formats.enumerated() {
+                    let component = format.formatID.replacingOccurrences(of: #"[^A-Za-z0-9._-]"#, with: "_", options: .regularExpression)
+                    let local = work.appendingPathComponent("\(selectionIndex)-\(index)-\(component).\(format.container ?? "mp4")")
+                    let refresh: @Sendable () async throws -> MediaFormat = {
+                        let updated = try await VidexBridge.extract(url, proxy: resolvedProxy, refreshPoToken: true)
+                        guard let match = updated.formats.first(where: {
+                            $0.formatID == format.formatID && $0.protocolType == format.protocolType
+                                && $0.audioTrackID == format.audioTrackID && $0.isDRC == format.isDRC
+                        }) else { throw EngineError.engineFailure("媒体地址刷新后原格式不可用") }
+                        return match
+                    }
+                    let trackProgress: @Sendable (Double, String?) -> Void = { frac, msg in
+                        let avg = trackFractions.with { arr -> Double in
+                            arr[index] = min(1, max(0, frac))
+                            return arr.reduce(0, +) / Double(formatCount)
+                        }
+                        progress(0.08 + (0.85 - 0.08) * avg, msg)
+                    }
+                    group.addTask {
+                        try await Self.fetchFormat(format, to: local, proxy: resolvedProxy, referer: referer,
+                            range: 0.0...1.0, progress: trackProgress,
+                            partialSeconds: partialSeconds, refresh: refresh,
+                            startSeconds: startSeconds, durationSeconds: durationSeconds,
+                            liveFromStart: liveFromStart, rateLimit: rateLimit)
+                        return (index, format, local)
+                    }
                 }
-                let referer = ["tiktok", "douyin"].contains(info.extractorID) ? info.webpageURL.absoluteString : nil
-                try await Self.fetchFormat(format, to: local, proxy: resolvedProxy, referer: referer,
-                    range: 0.08...0.85, progress: progress,
-                    partialSeconds: options.partialSeconds, refresh: refresh,
-                    startSeconds: options.startSeconds, durationSeconds: options.durationSeconds,
-                    liveFromStart: options.liveFromStart, rateLimit: options.rateLimitBytesPerSecond)
-                inputs.append((format, local))
+                var collected: [(Int, MediaFormat, URL)] = []
+                for try await item in group {
+                    collected.append(item)
+                }
+                return collected.sorted { $0.0 < $1.0 }
             }
+            let inputs = indexedInputs.map { ($0.1, $0.2) }
             guard let first = inputs.first else { throw EngineError.engineFailure("格式选择为空") }
             let base = selectionIndex == 0 ? dest : dest.deletingLastPathComponent().appendingPathComponent("\(dest.deletingPathExtension().lastPathComponent)-\(selectionIndex).\(dest.pathExtension)")
             let target = Self.destURL(for: first.0, base: base)
@@ -394,80 +418,7 @@ public final class VidexDownloadEngine: DownloadEngine, @unchecked Sendable {
                                    url: URL(string: "about:blank")!))
     }
 
-    // MARK: - 文件下载（URLSessionDownloadDelegate，带代理与进度）
-
-    final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-        let progress: @Sendable (Double, String?) -> Void
-        let range: ClosedRange<Double>
-        let label: String
-        let expectedSize: Int64?
-        var continuation: CheckedContinuation<URL, Error>?
-        /// 目标路径：必须在 didFinishDownloadingTo 回调内完成移动（回调返回后 tmp 会被系统回收）
-        let destination: URL
-
-        init(progress: @escaping @Sendable (Double, String?) -> Void,
-             range: ClosedRange<Double>, label: String, expectedSize: Int64?,
-             destination: URL) {
-            self.progress = progress
-            self.range = range
-            self.label = label
-            self.expectedSize = expectedSize
-            self.destination = destination
-        }
-
-        func run(_ url: URL, proxy: String, referer: String?) async throws -> URL {
-            let config = URLSessionConfiguration.ephemeral
-            config.timeoutIntervalForRequest = 60
-            config.timeoutIntervalForResource = 3600
-            if !proxy.isEmpty {
-                config.connectionProxyDictionary = URLSessionHTTPClient.proxyDictionary(from: proxy)
-            }
-            let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
-            defer { session.finishTasksAndInvalidate() }
-
-            var request = URLRequest(url: url)
-            request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-                             forHTTPHeaderField: "User-Agent")
-            if let referer { request.setValue(referer, forHTTPHeaderField: "Referer") }
-
-            return try await withCheckedThrowingContinuation { cont in
-                self.continuation = cont
-                session.downloadTask(with: request).resume()
-            }
-        }
-
-        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
-                        didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
-                        totalBytesExpectedToWrite: Int64) {
-            let total = totalBytesExpectedToWrite > 0
-                ? totalBytesExpectedToWrite
-                : (expectedSize ?? 0)
-            let fraction = total > 0 ? Double(totalBytesWritten) / Double(total) : 0
-            let pct = range.lowerBound + (range.upperBound - range.lowerBound) * min(1, fraction)
-            progress(pct, "\(label) \(Int(fraction * 100))%")
-        }
-
-        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
-                        didFinishDownloadingTo location: URL) {
-            guard let continuation else { return }
-            self.continuation = nil
-            do {
-                let fm = FileManager.default
-                try? fm.removeItem(at: destination)
-                try fm.moveItem(at: location, to: destination)
-                continuation.resume(returning: destination)
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
-
-        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-            guard let error, let continuation else { return }
-            self.continuation = nil
-            continuation.resume(throwing: EngineError.engineFailure(
-                "Videx 下载失败：\(error.localizedDescription)"))
-        }
-    }
+    // MARK: - 文件下载（统一走 NativeMediaDownloader 多并发 + 断点续传底层）
 
     /// HLS must be demuxed/remuxed, never saved as a playlist pretending to be MP4.
     static func fetchFormat(_ original: MediaFormat, to target: URL, proxy: String, referer: String?,
@@ -503,23 +454,22 @@ public final class VidexDownloadEngine: DownloadEngine, @unchecked Sendable {
         }
     }
 
-    /// 下载（主 URL 失败自动切换备用 CDN），落盘到 target。
+    /// 下载（主 URL 失败自动切换备用 CDN），落盘到 target，共享 NativeMediaDownloader 多并发断点续传底层。
     static func fetch(_ url: URL, to target: URL, proxy: String, referer: String?,
                       range: ClosedRange<Double>, progress: @escaping @Sendable (Double, String?) -> Void,
                       fallbackURLs: [URL]? = nil) async throws {
-        let candidates = [url] + (fallbackURLs ?? [])
-        var lastError: Error = EngineError.engineFailure("无下载地址")
-        for candidate in candidates {
-            do {
-                let downloader = Downloader(progress: progress, range: range, label: "下载",
-                                            expectedSize: nil, destination: target)
-                _ = try await downloader.run(candidate, proxy: proxy, referer: referer)
-                return
-            } catch {
-                lastError = error
-            }
+        var headers = ["User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"]
+        if let referer { headers["Referer"] = referer }
+        let http = URLSessionHTTPClient(proxy: proxy.isEmpty ? nil : proxy, timeout: 60)
+        _ = try await NativeMediaDownloader.downloadFile(
+            url: url,
+            to: target,
+            http: http,
+            headers: headers,
+            backupURLs: fallbackURLs
+        ) { frac, msg in
+            progress(range.lowerBound + (range.upperBound - range.lowerBound) * frac, msg)
         }
-        throw lastError
     }
 
     /// ffmpeg 合流（-c copy 不重编码；mp4 输出需要 +faststart 便于边下边播）。

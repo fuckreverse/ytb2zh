@@ -97,6 +97,62 @@ final class NativeExpansionTests: XCTestCase {
         _ = try await NativeMediaDownloader.download(format: format("140", .audioOnly), to: target, http: ExpansionHTTP([second]))
         XCTAssertEqual(try Data(contentsOf: target), Data("ABCDEF".utf8))
     }
+    func testConcurrentRangeDownloadAndOutOfOrderResume() async throws {
+        let target = temporary(); defer { cleanup(target) }
+        let fullPayload = Data("0123456789ABCDEF".utf8) // 16 bytes, 4 chunks of 4 bytes
+        let firstRun = RangeMockHTTP(payload: fullPayload, failRange: "bytes=4-7")
+        do {
+            _ = try await NativeMediaDownloader.downloadFile(
+                url: URL(string: "https://example.com/model.bin")!,
+                to: target,
+                http: firstRun,
+                concurrency: 3,
+                chunkSize: 4
+            )
+            XCTFail("首轮下载应在模拟断网处抛错")
+        } catch {}
+        // 校验 .part 与 .state.json 已保留：0-3 已完成，8-11/12-15 也可能已在并发中完成落盘
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target.appendingPathExtension("part").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target.appendingPathExtension("state.json").path))
+
+        let secondRun = RangeMockHTTP(payload: fullPayload, failRange: nil)
+        _ = try await NativeMediaDownloader.downloadFile(
+            url: URL(string: "https://example.com/model.bin")!,
+            to: target,
+            http: secondRun,
+            concurrency: 3,
+            chunkSize: 4
+        )
+        XCTAssertEqual(try Data(contentsOf: target), fullPayload)
+        let secondRanges = await secondRun.requestedRanges
+        XCTAssertFalse(secondRanges.contains("bytes=0-3"), "已落盘的首块不应在续传时重复下载")
+        XCTAssertTrue(secondRanges.contains("bytes=4-7"), "首轮失败的分块应在续传时补齐")
+    }
+    func testConcurrentDASHFragmentsCommitInStrictOrder() async throws {
+        let target = temporary(); defer { cleanup(target) }
+        let urls = (0..<5).map { URL(string: "https://example.com/seg\($0).m4s")! }
+        let fragments = urls.enumerated().map { idx, u in
+            MediaFragment(url: u, duration: 2.0, isInitialization: idx == 0, sequence: Int64(idx))
+        }
+        let dashFormat = MediaFormat(
+            formatID: "dash-v",
+            kind: .videoOnly,
+            url: urls[0],
+            protocolType: .dash,
+            fragments: fragments
+        )
+        let http = DelayedFragmentHTTP(payloads: [
+            urls[0]: Data("INIT-".utf8),
+            urls[1]: Data("SEG1-".utf8),
+            urls[2]: Data("SEG2-".utf8),
+            urls[3]: Data("SEG3-".utf8),
+            urls[4]: Data("SEG4".utf8),
+        ])
+        _ = try await NativeMediaDownloader.download(format: dashFormat, to: target, http: http, concurrency: 4)
+        XCTAssertEqual(String(data: try Data(contentsOf: target), encoding: .utf8), "INIT-SEG1-SEG2-SEG3-SEG4")
+        let maxInFlight = await http.maxConcurrent
+        XCTAssertGreaterThan(maxInFlight, 1, "DASH 分片应多并发拉取")
+    }
     func testHLSRangesAndSequence() async throws {
         let target = temporary(); defer { cleanup(target) }
         let text = "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:12\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,\n#EXT-X-BYTERANGE:3@0\nmedia.mp4\n#EXTINF:2,\n#EXT-X-BYTERANGE:3\nmedia.mp4\n#EXT-X-ENDLIST"
@@ -147,4 +203,65 @@ private actor ExpansionHTTP: HTTPFetching {
     var responses: [HTTPResponse]; var requests: [HTTPRequest] = []
     init(_ responses: [HTTPResponse]) { self.responses = responses }
     func fetch(_ request: HTTPRequest) async throws -> HTTPResponse { requests.append(request); guard !responses.isEmpty else { throw ExtractionError.network("simulated offline") }; return responses.removeFirst() }
+}
+
+private actor RangeMockHTTP: HTTPFetching {
+    let payload: Data
+    let failRange: String?
+    var requestedRanges: [String] = []
+
+    init(payload: Data, failRange: String?) {
+        self.payload = payload
+        self.failRange = failRange
+    }
+
+    func fetch(_ request: HTTPRequest) async throws -> HTTPResponse {
+        guard let rangeHeader = request.headers["Range"],
+              rangeHeader.hasPrefix("bytes=") else {
+            return HTTPResponse(status: 200, headers: ["ETag": "\"v1\""], body: payload)
+        }
+        requestedRanges.append(rangeHeader)
+        if rangeHeader == failRange {
+            throw ExtractionError.network("simulated range failure for \(rangeHeader)")
+        }
+        let parts = rangeHeader.dropFirst("bytes=".count).split(separator: "-").compactMap { Int($0) }
+        let start = parts[0]
+        let end = min(payload.count - 1, parts[1])
+        let slice = Data(payload[start...end])
+        return HTTPResponse(
+            status: 206,
+            headers: [
+                "Content-Range": "bytes \(start)-\(end)/\(payload.count)",
+                "ETag": "\"v1\"",
+            ],
+            body: slice
+        )
+    }
+}
+
+private actor DelayedFragmentHTTP: HTTPFetching {
+    let payloads: [URL: Data]
+    var active = 0
+    var maxConcurrent = 0
+
+    init(payloads: [URL: Data]) {
+        self.payloads = payloads
+    }
+
+    private func endRequest() {
+        active -= 1
+    }
+
+    func fetch(_ request: HTTPRequest) async throws -> HTTPResponse {
+        active += 1
+        maxConcurrent = max(maxConcurrent, active)
+        // 让后续分片比首分片更快返回，验证乱序返回下的顺序落盘与真实并发度
+        let delayMS: UInt64 = request.url.absoluteString.contains("seg1") ? 40 : 10
+        try await Task.sleep(for: .milliseconds(delayMS))
+        endRequest()
+        guard let data = payloads[request.url] else {
+            return HTTPResponse(status: 404, headers: [:], body: Data())
+        }
+        return HTTPResponse(status: 200, headers: [:], body: data)
+    }
 }

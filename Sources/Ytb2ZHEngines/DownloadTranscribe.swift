@@ -17,13 +17,17 @@ public final class YtDlpDownloadEngine: DownloadEngine, @unchecked Sendable {
         try fm.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
         // 断点续跑：目标已是完整文件则跳过（缓存命中时无需准备二进制）
         if let size = fileSize(dest.path), size > 1_000_000 { return dest }
-        // yt-dlp 可能落到其它扩展名（source.webm/mkv…）：dest 缺失但同前缀产物已存在也直接复用，
-        // 避免管线二次调用时对同一视频完整重下
-        if dest.pathExtension.lowercased() != "json" {
+        // yt-dlp 可能落到其它扩展名（source.webm/mkv…）：dest 缺失但同前缀完整产物已存在也直接复用，
+        // 避免管线二次调用时对同一视频完整重下（排除 .part / .ytdl 等未完成续传文件）
+        let ignoredExts: Set<String> = ["json", "part", "ytdl", "temp"]
+        if !ignoredExts.contains(dest.pathExtension.lowercased()) {
             let base = dest.deletingPathExtension().lastPathComponent
             let siblings = ((try? fm.contentsOfDirectory(at: dest.deletingLastPathComponent(),
                                                         includingPropertiesForKeys: nil)) ?? [])
-                .filter { $0.lastPathComponent.hasPrefix("\(base).") && $0.pathExtension != "json" }
+                .filter {
+                    $0.lastPathComponent.hasPrefix("\(base).")
+                        && !ignoredExts.contains($0.pathExtension.lowercased())
+                }
             if let any = siblings.first(where: { (fileSize($0.path) ?? 0) > 1_000_000 }) { return any }
         }
         // 真正需要下载时才确保二进制就绪（未安装则按需下载）
@@ -33,8 +37,8 @@ public final class YtDlpDownloadEngine: DownloadEngine, @unchecked Sendable {
             .appendingPathComponent("source.%(ext)s").path
         var args: [String] = []
         if !options.proxy.isEmpty { args += ["--proxy", options.proxy] }
-        args += ["--no-playlist", "--no-part", "-f", options.format,
-                 "-o", outTpl, "--newline", url]
+        args += ["--no-playlist", "--continue", "--concurrent-fragments", "4",
+                 "-f", options.format, "-o", outTpl, "--newline", url]
         // 备用二进制使用独立的 PO Token / JS 求解器配置；
         // 此路径不会自动复用应用内 WKWebView 的会话，受限格式的可用性由其配置决定。
         // 试转模式：只下载前 N 秒（download-sections 需 ffmpeg 切段合并，管线本就依赖 ffmpeg；
@@ -66,7 +70,7 @@ public final class YtDlpDownloadEngine: DownloadEngine, @unchecked Sendable {
         // yt-dlp 可能落到 source.mp4 / source.webm / source.mkv 等
         let dir = dest.deletingLastPathComponent()
         let candidates = ((try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.lastPathComponent.hasPrefix("source.") && $0.pathExtension != "json" }
+            .filter { $0.lastPathComponent.hasPrefix("source.") && !ignoredExts.contains($0.pathExtension.lowercased()) }
         if let mp4 = candidates.first(where: { $0.pathExtension == "mp4" }) { return mp4 }
         if let any = candidates.first { return any }
         throw EngineError.engineFailure("yt-dlp 未产出媒体文件")

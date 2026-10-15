@@ -26,27 +26,43 @@ public enum YtDlpInstaller {
     public static func ensureInstalled(proxy: String = "",
                                        progress: (@Sendable (String) -> Void)? = nil) async throws -> String {
         if let existing = availablePath { return existing }
-        progress?("内置提取不可用，下载 yt-dlp 备用引擎…")
-        // 二进制约 30-40MB，弱代理链路实测可达 10 分钟以上：专用长超时客户端
-        // （request 600s 空闲上限 + resource 2400s 总时长上限）
-        let client = URLSessionHTTPClient(proxy: proxy.isEmpty ? nil : proxy, timeout: 600)
-        let response = try await client.fetch(.get(downloadURL))
-        guard response.isOK, response.body.count > 1_000_000 else {
-            throw EngineError.engineFailure(
-                "yt-dlp 备用引擎下载失败：HTTP \(response.status)（\(response.body.count) 字节）")
-        }
+        return try await install(to: installPath, proxy: proxy, progress: progress)
+    }
 
+    static func install(to destPath: String,
+                        proxy: String = "",
+                        http: HTTPFetching? = nil,
+                        minimumBytes: Int64 = 1_000_000,
+                        progress: (@Sendable (String) -> Void)? = nil) async throws -> String {
+        progress?("内置提取不可用，下载 yt-dlp 备用引擎…")
         let fm = FileManager.default
-        let binDir = (installPath as NSString).deletingLastPathComponent
+        let binDir = (destPath as NSString).deletingLastPathComponent
         try fm.createDirectory(atPath: binDir, withIntermediateDirectories: true)
-        let tmp = binDir + "/.yt-dlp_macos.\(UUID().uuidString).tmp"
-        try response.body.write(to: URL(fileURLWithPath: tmp))
-        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tmp)
+        // 固定 staging 路径以保留 .part + .state.json 供断网后续传，下载完成后再赋予可执行权限并原子替换到目标路径
+        let staging = URL(fileURLWithPath: destPath + ".staging")
+        let client = http ?? URLSessionHTTPClient(proxy: proxy.isEmpty ? nil : proxy, timeout: 120)
+        _ = try await NativeMediaDownloader.downloadFile(
+            url: downloadURL,
+            to: staging,
+            http: client,
+            concurrency: 4,
+            chunkSize: 1024 * 1024
+        ) { frac, detail in
+            let pct = Int((min(1, max(0, frac)) * 100).rounded())
+            progress?("下载 yt-dlp 备用引擎 \(pct)%（\(detail ?? "")）")
+        }
+        let downloadedSize = fileSize(staging.path) ?? 0
+        guard downloadedSize >= minimumBytes else {
+            try? fm.removeItem(at: staging)
+            throw EngineError.engineFailure(
+                "yt-dlp 备用引擎下载失败：文件体积异常（\(downloadedSize) 字节）")
+        }
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: staging.path)
         // 原子替换：下载中断/并发安装都不会留下半截可执行文件
-        _ = try? fm.removeItem(atPath: installPath)
-        try fm.moveItem(atPath: tmp, toPath: installPath)
-        progress?("yt-dlp 就绪：\(installPath)")
-        return installPath
+        _ = try? fm.removeItem(atPath: destPath)
+        try fm.moveItem(atPath: staging.path, toPath: destPath)
+        progress?("yt-dlp 就绪：\(destPath)")
+        return destPath
     }
 
     /// 同步版：供同步调用点（VideoInfoService / OrigStreamService / VideoCatalogService）。

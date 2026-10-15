@@ -1,5 +1,6 @@
 import Foundation
 import Ytb2ZHCore
+import Videx
 
 // MARK: - 模型按需下载（whisper ggml / sherpa-onnx vits → ~/.ytb2zh/models/）
 // 设计：首次使用内嵌引擎时若模型缺失，自动下载到统一模型根目录；
@@ -458,30 +459,38 @@ public enum ModelStore {
         return total
     }
 
-    // MARK: - 通用下载
+    // MARK: - 通用下载（统一走 NativeMediaDownloader 多并发 + 断点续传底层）
 
-    private static func download(
+    static func download(
         url: String, to dest: String, proxy: String, label: String,
+        http: HTTPFetching? = nil,
         progress: @Sendable (Double, String) -> Void
     ) async throws {
         guard let req = URL(string: url) else {
             throw EngineError.engineFailure("下载地址非法：\(url)")
         }
-        let config = URLSessionConfiguration.ephemeral
-        let dict = EdgeTTSProxy.dictionary(from: proxy)
-        if !dict.isEmpty { config.connectionProxyDictionary = dict }
-        let session = URLSession(configuration: config)
-        defer { session.finishTasksAndInvalidate() }
-
+        let client = http ?? URLSessionHTTPClient(proxy: proxy.isEmpty ? nil : proxy, timeout: 120)
+        let targetURL = URL(fileURLWithPath: dest)
         progress(0.0, label + "…")
-        let (bytes, response) = try await session.data(for: URLRequest(url: req))
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-            throw EngineError.engineFailure("\(label)失败：HTTP \(code)")
+        do {
+            _ = try await NativeMediaDownloader.downloadFile(
+                url: req,
+                to: targetURL,
+                http: client,
+                concurrency: 4,
+                chunkSize: 1024 * 1024
+            ) { frac, detail in
+                let pct = Int((min(1, max(0, frac)) * 100).rounded())
+                if let detail, !detail.isEmpty {
+                    progress(frac, "\(label) \(pct)%（\(detail)）")
+                } else {
+                    progress(frac, "\(label) \(pct)%")
+                }
+            }
+        } catch {
+            throw EngineError.engineFailure("\(label)失败：\(error.localizedDescription)")
         }
-        let part = dest + ".part"
-        try bytes.write(to: URL(fileURLWithPath: part))
-        try FileManager.default.moveItem(at: URL(fileURLWithPath: part), to: URL(fileURLWithPath: dest))
-        progress(1.0, label + "完成（\(bytes.count / 1_048_576)MB）")
+        let sizeMB = max(1, Int((fileSize(dest) ?? 0) / 1_048_576))
+        progress(1.0, "\(label)完成（\(sizeMB)MB）")
     }
 }
